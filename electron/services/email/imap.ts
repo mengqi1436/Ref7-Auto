@@ -15,97 +15,59 @@ type ImapSearchCriteria = (string | [string, string | Date])[]
 
 export class ImapMailService {
   private config: ImapMailConfig
+  private onLog?: (type: string, message: string) => void
 
-  constructor(config: ImapMailConfig) {
+  constructor(config: ImapMailConfig, onLog?: (type: string, message: string) => void) {
     this.config = config
+    this.onLog = onLog
+  }
+
+  private log(type: string, message: string) {
+    this.onLog?.(type, message)
   }
 
   async testConnection(): Promise<boolean> {
-    console.log('测试IMAP连接:', {
-      server: this.config.server,
-      port: this.config.port,
-      user: this.config.user,
-      passLength: this.config.pass?.length || 0
-    })
-
     return new Promise((resolve) => {
-      const timeoutId = setTimeout(() => {
-        console.error('IMAP连接超时')
-        resolve(false)
-      }, 20000)
+      const timeoutId = setTimeout(() => resolve(false), 20000)
 
       try {
-        const imap = new Imap({
-          user: this.config.user,
-          password: this.config.pass,
-          host: this.config.server || 'imap.qq.com',
-          port: this.config.port || 993,
-          tls: true,
-          tlsOptions: { 
-            rejectUnauthorized: false,
-            servername: this.config.server || 'imap.qq.com'
-          },
-          connTimeout: 20000,
-          authTimeout: 20000,
-          debug: (info: string) => console.log('IMAP Debug:', info)
-        })
+        const imap = this.createConnection()
 
         imap.once('ready', () => {
-          console.log('IMAP连接成功!')
           clearTimeout(timeoutId)
-          try {
-            imap.end()
-          } catch {}
+          try { imap.end() } catch {}
           resolve(true)
         })
 
-        imap.once('error', (err: Error) => {
-          console.error('IMAP连接错误:', err.message)
-          console.error('错误详情:', err)
+        imap.once('error', () => {
           clearTimeout(timeoutId)
-          try {
-            imap.end()
-          } catch {}
+          try { imap.end() } catch {}
           resolve(false)
         })
 
-        imap.once('end', () => {
-          console.log('IMAP连接已关闭')
-          clearTimeout(timeoutId)
-        })
-
+        imap.once('end', () => clearTimeout(timeoutId))
         imap.connect()
-      } catch (err) {
-        console.error('IMAP创建连接异常:', err)
+      } catch {
         clearTimeout(timeoutId)
         resolve(false)
       }
     })
   }
 
-  async getVerificationCode(targetEmail: string, timeout = 60000): Promise<string | null> {
-    const startTime = Date.now()
-    const pollInterval = 5000
-
-    while (Date.now() - startTime < timeout) {
-      try {
-        const code = await this.checkLatestMail(targetEmail)
-        if (code) return code
-      } catch (error) {
-        console.error('检查邮件失败:', error)
-      }
-      await this.delay(pollInterval)
+  async getVerificationCode(targetEmail: string, timeout = 10000): Promise<string | null> {
+    try {
+      return await Promise.race([
+        this.checkLatestMail(targetEmail),
+        new Promise<null>(resolve => setTimeout(() => resolve(null), timeout))
+      ])
+    } catch {
+      return null
     }
-
-    return null
   }
 
   private async checkLatestMail(targetEmail: string): Promise<string | null> {
     return new Promise((resolve, reject) => {
-      const timeoutId = setTimeout(() => {
-        resolve(null)
-      }, 30000)
-
+      const timeoutId = setTimeout(() => resolve(null), 8000)
       const imap = this.createConnection()
 
       imap.once('ready', () => {
@@ -117,72 +79,116 @@ export class ImapMailService {
           }
 
           const since = new Date(Date.now() - 5 * 60 * 1000)
-          const searchCriteria: ImapSearchCriteria = this.isNetEaseMail()
-            ? ['UNSEEN', ['SINCE', since]]
-            : ['ALL', ['SINCE', since]]
+          // 搜索来自 Context7 的邮件
+          const searchCriteria: ImapSearchCriteria = [['FROM', 'notifications@context7.com'], ['SINCE', since]]
 
           imap.search(searchCriteria, (err, results) => {
             if (err || !results?.length) {
-              clearTimeout(timeoutId)
-              imap.end()
-              return resolve(null)
+              // 如果没找到，尝试搜索所有最近的未读邮件
+              imap.search(['UNSEEN', ['SINCE', since]], (err2, results2) => {
+                if (err2 || !results2?.length) {
+                  // 最后尝试搜索所有最近邮件
+                  imap.search(['ALL', ['SINCE', since]], (err3, results3) => {
+                    if (err3 || !results3?.length) {
+                      clearTimeout(timeoutId)
+                      imap.end()
+                      return resolve(null)
+                    }
+                    this.processLatestMail(imap, results3, targetEmail, timeoutId, resolve)
+                  })
+                  return
+                }
+                this.processLatestMail(imap, results2, targetEmail, timeoutId, resolve)
+              })
+              return
             }
 
-            const latest = results[results.length - 1]
-            const fetch = imap.fetch([latest], { bodies: '' })
-
-            fetch.on('message', (msg) => {
-              msg.on('body', (stream: Readable) => {
-                simpleParser(stream, (err, parsed) => {
-                  if (err) {
-                    clearTimeout(timeoutId)
-                    imap.end()
-                    return resolve(null)
-                  }
-
-                  if (targetEmail && !this.matchesRecipient(parsed, targetEmail)) {
-                    clearTimeout(timeoutId)
-                    imap.end()
-                    return resolve(null)
-                  }
-
-                  const content = this.extractContent(parsed)
-                  const cleanContent = content.replace(new RegExp(targetEmail, 'gi'), '')
-                  const code = this.extractVerificationCode(cleanContent)
-
-                  clearTimeout(timeoutId)
-                  if (code) {
-                    imap.addFlags([latest], ['\\Seen', '\\Deleted'], () => {
-                      imap.expunge(() => {
-                        imap.end()
-                        resolve(code)
-                      })
-                    })
-                  } else {
-                    imap.end()
-                    resolve(null)
-                  }
-                })
-              })
-            })
-
-            fetch.once('error', () => {
-              clearTimeout(timeoutId)
-              imap.end()
-              resolve(null)
-            })
+            this.processLatestMail(imap, results, targetEmail, timeoutId, resolve)
           })
         })
       })
 
       imap.once('error', (err: Error) => {
         clearTimeout(timeoutId)
-        console.error('IMAP错误:', err.message)
         reject(err)
       })
 
       imap.connect()
     })
+  }
+
+  private processLatestMail(
+    imap: Imap,
+    results: number[],
+    targetEmail: string,
+    timeoutId: NodeJS.Timeout,
+    resolve: (value: string | null) => void
+  ) {
+    // 从最新的邮件开始检查
+    const sortedResults = [...results].reverse()
+
+    const checkNext = (index: number) => {
+      if (index >= sortedResults.length) {
+        clearTimeout(timeoutId)
+        imap.end()
+        return resolve(null)
+      }
+
+      const msgId = sortedResults[index]
+      const fetch = imap.fetch([msgId], { bodies: '' })
+
+      fetch.on('message', (msg) => {
+        msg.on('body', (stream: Readable) => {
+          simpleParser(stream, (err, parsed) => {
+            if (err) {
+              checkNext(index + 1)
+              return
+            }
+
+            // 检查是否是 Context7 的邮件
+            const fromAddress = parsed.from?.value?.[0]?.address?.toLowerCase() || ''
+            const fromText = parsed.from?.text?.toLowerCase() || ''
+            const subject = parsed.subject?.toLowerCase() || ''
+            const isContext7Mail = fromAddress === 'notifications@context7.com' ||
+                                   fromText.includes('context7') ||
+                                   fromText.includes('clerk') ||
+                                   subject.includes('verification') ||
+                                   subject.includes('code')
+
+            // 检查收件人匹配或内容包含目标邮箱
+            const matchesTarget = this.matchesRecipient(parsed, targetEmail)
+            const content = this.extractContent(parsed)
+            const contentHasEmail = content.toLowerCase().includes(targetEmail.toLowerCase())
+
+            // 如果是 Context7 邮件，直接提取验证码（不严格检查收件人）
+            if (isContext7Mail) {
+              const cleanContent = content.replace(new RegExp(targetEmail, 'gi'), '')
+              const code = this.extractVerificationCode(cleanContent)
+
+              if (code) {
+                clearTimeout(timeoutId)
+                imap.addFlags([msgId], ['\\Seen', '\\Deleted'], () => {
+                  imap.expunge(() => {
+                    imap.end()
+                    resolve(code)
+                  })
+                })
+                return
+              }
+            }
+
+            // 继续检查下一封邮件
+            checkNext(index + 1)
+          })
+        })
+      })
+
+      fetch.once('error', () => {
+        checkNext(index + 1)
+      })
+    }
+
+    checkNext(0)
   }
 
   private createConnection(): Imap {
@@ -192,43 +198,34 @@ export class ImapMailService {
       host: this.config.server || 'imap.qq.com',
       port: this.config.port || 993,
       tls: true,
-      tlsOptions: { 
+      tlsOptions: {
         rejectUnauthorized: false,
         servername: this.config.server || 'imap.qq.com'
       },
-      connTimeout: 20000,
-      authTimeout: 20000,
+      connTimeout: 10000,
+      authTimeout: 10000
     })
-  }
-
-  private isNetEaseMail(): boolean {
-    return this.config.user.endsWith('@163.com') ||
-           this.config.user.endsWith('@126.com') ||
-           this.config.user.endsWith('@yeah.net')
   }
 
   private matchesRecipient(parsed: any, targetEmail: string): boolean {
     const addresses = this.extractEmailAddresses(parsed)
-    
+
     const headers = parsed.headers
     const originalTo = headers?.get('x-original-to') as string | undefined
     const deliveredTo = headers?.get('delivered-to') as string | undefined
-    
+
     if (originalTo) addresses.push(originalTo.toLowerCase())
     if (deliveredTo) addresses.push(deliveredTo.toLowerCase())
-    
-    const content = this.extractContent(parsed)
-    
-    return addresses.some(addr => addr.toLowerCase().includes(targetEmail.toLowerCase())) ||
-           content.toLowerCase().includes(targetEmail.toLowerCase())
+
+    return addresses.some(addr => addr.toLowerCase().includes(targetEmail.toLowerCase()))
   }
 
   private extractEmailAddresses(parsed: any): string[] {
     const addresses: string[] = []
-    
+
     const processField = (field: any) => {
       if (!field) return
-      
+
       if (Array.isArray(field)) {
         field.forEach(item => {
           if (item?.value) {
@@ -243,10 +240,10 @@ export class ImapMailService {
         })
       }
     }
-    
+
     processField(parsed.to)
     processField(parsed.cc)
-    
+
     return addresses
   }
 
@@ -258,11 +255,13 @@ export class ImapMailService {
 
   private extractVerificationCode(text: string): string | null {
     const patterns = [
-      /(?<![a-zA-Z@.])\b(\d{6})\b/,
-      /验证码[：:]\s*(\d{4,8})/,
-      /code[：:]\s*(\d{4,8})/i,
-      /verification code[：:]\s*(\d{4,8})/i,
-      /Your code is[：:]?\s*(\d{4,8})/i,
+      /(\d{6}) is your verification code/i,
+      /verification code[：:\s]*(\d{6})/i,
+      /Your (?:verification )?code is[：:\s]*(\d{6})/i,
+      /enter (?:the )?(?:following )?(?:verification )?code[：:\s]*(\d{6})/i,
+      /code[：:\s]+(\d{6})/i,
+      />(\d{6})</,
+      /\b(\d{6})\b/
     ]
 
     for (const pattern of patterns) {
@@ -271,9 +270,5 @@ export class ImapMailService {
     }
 
     return null
-  }
-
-  private delay(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms))
   }
 }

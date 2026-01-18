@@ -42,7 +42,7 @@ export class TempMailPlusService {
     }
   }
 
-  async getVerificationCode(maxRetries = 20, retryInterval = 3000): Promise<string | null> {
+  async getVerificationCode(maxRetries = 5, retryInterval = 2000): Promise<string | null> {
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       try {
         const mailList = await this.getMailList()

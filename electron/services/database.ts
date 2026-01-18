@@ -1,30 +1,31 @@
-// @ts-ignore
-import initSqlJs from 'sql.js'
 import path from 'path'
-import { app } from 'electron'
 import fs from 'fs'
+import os from 'os'
 
-type AccountStatus = 'active' | 'pending' | 'invalid'
-type EmailType = 'tempmail_plus' | 'imap'
-type EmailProtocol = 'IMAP' | 'POP3'
-type Theme = 'dark' | 'light' | 'system'
+export type AccountStatus = 'active' | 'pending' | 'invalid'
+export type EmailType = 'tempmail_plus' | 'imap'
+export type EmailProtocol = 'IMAP' | 'POP3'
+export type Theme = 'dark' | 'light' | 'system'
 
-interface Account {
+export interface Account {
   id: number
   email: string
   password: string
   emailType: EmailType
   status: AccountStatus
   createdAt: string
+  apiKey?: string
+  apiKeyName?: string
+  requestsLimit?: number
 }
 
-interface TempMailPlusConfig {
+export interface TempMailPlusConfig {
   username: string
   epin: string
   extension: string
 }
 
-interface ImapMailConfig {
+export interface ImapMailConfig {
   server: string
   port: number
   user: string
@@ -34,201 +35,52 @@ interface ImapMailConfig {
   domain: string
 }
 
-interface AppSettings {
+export interface RegistrationSettings {
+  passwordLength: number
+  intervalMin: number
+  intervalMax: number
+  timeout: number
+  showBrowser: boolean
+}
+
+export interface AppSettings {
   tempMailPlus: TempMailPlusConfig
   imapMail: ImapMailConfig
-  registration: {
-    passwordLength: number
-    intervalMin: number
-    intervalMax: number
-    timeout: number
-    showBrowser: boolean
-  }
+  registration: RegistrationSettings
   domain: string
   theme: Theme
 }
 
-let db: any = null
-let dbPath = ''
+interface AccountsData {
+  nextId: number
+  accounts: Account[]
+}
 
-function getDbPath(): string {
-  const userDataPath = app?.getPath?.('userData') || process.cwd()
-  const dbDir = path.join(userDataPath, 'data')
-  
-  if (!fs.existsSync(dbDir)) {
-    fs.mkdirSync(dbDir, { recursive: true })
+const DATA_DIR = path.join(os.homedir(), '.ref7')
+const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json')
+const ACCOUNTS_FILE = path.join(DATA_DIR, 'accounts.json')
+
+function ensureDataDir(): void {
+  if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true })
   }
-  
-  return path.join(dbDir, 'ref7.db')
 }
 
-export async function initDatabase(): Promise<void> {
-  if (db) return
-
-  const SQL = await initSqlJs()
-  dbPath = getDbPath()
-
-  if (fs.existsSync(dbPath)) {
-    const buffer = fs.readFileSync(dbPath)
-    db = new SQL.Database(buffer)
-  } else {
-    db = new SQL.Database()
-  }
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS accounts (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      email TEXT UNIQUE NOT NULL,
-      password TEXT NOT NULL,
-      emailType TEXT NOT NULL,
-      status TEXT DEFAULT 'active',
-      createdAt TEXT DEFAULT CURRENT_TIMESTAMP
-    )
-  `)
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS settings (
-      key TEXT PRIMARY KEY,
-      value TEXT NOT NULL
-    )
-  `)
-
-  saveDatabase()
-}
-
-function saveDatabase(): void {
-  if (!db) return
-  const data = db.export()
-  const buffer = Buffer.from(data)
-  fs.writeFileSync(dbPath, buffer)
-}
-
-export function getAllAccounts(): Account[] {
-  if (!db) return []
-  
-  const stmt = db.prepare('SELECT * FROM accounts ORDER BY createdAt DESC')
-  const accounts: Account[] = []
-  
-  while (stmt.step()) {
-    const row = stmt.getAsObject()
-    accounts.push({
-      id: row.id,
-      email: row.email,
-      password: row.password,
-      emailType: row.emailType,
-      status: row.status,
-      createdAt: row.createdAt
-    })
-  }
-  stmt.free()
-  
-  return accounts
-}
-
-export function addAccount(account: Omit<Account, 'id' | 'createdAt'>): Account {
-  if (!db) throw new Error('Database not initialized')
-  
-  const createdAt = new Date().toISOString()
-  db.run(
-    'INSERT INTO accounts (email, password, emailType, status, createdAt) VALUES (?, ?, ?, ?, ?)',
-    [account.email, account.password, account.emailType, account.status, createdAt]
-  )
-  
-  const result = db.exec('SELECT last_insert_rowid() as id')
-  const id = result[0]?.values[0]?.[0] as number
-  
-  saveDatabase()
-  
-  return { id, ...account, createdAt }
-}
-
-export function deleteAccount(id: number): void {
-  if (!db) return
-  db.run('DELETE FROM accounts WHERE id = ?', [id])
-  saveDatabase()
-}
-
-export function deleteAccounts(ids: number[]): void {
-  if (!db) return
-  const placeholders = ids.map(() => '?').join(',')
-  db.run(`DELETE FROM accounts WHERE id IN (${placeholders})`, ids)
-  saveDatabase()
-}
-
-export function updateAccountStatus(id: number, status: AccountStatus): void {
-  if (!db) return
-  db.run('UPDATE accounts SET status = ? WHERE id = ?', [status, id])
-  saveDatabase()
-}
-
-export function exportAccounts(format: 'csv' | 'json'): string {
-  const accounts = getAllAccounts()
-  
-  if (format === 'json') {
-    return JSON.stringify(accounts, null, 2)
-  }
-  
-  const header = 'email,password,emailType,status,createdAt'
-  const rows = accounts.map(a => 
-    `"${a.email}","${a.password}","${a.emailType}","${a.status}","${a.createdAt}"`
-  )
-  return [header, ...rows].join('\n')
-}
-
-export function getSettings(): AppSettings {
-  if (!db) return getDefaultSettings()
-  
+function readJsonFile<T>(filePath: string, defaultValue: T): T {
   try {
-    const stmt = db.prepare('SELECT value FROM settings WHERE key = ?')
-    stmt.bind(['appSettings'])
-    
-    if (stmt.step()) {
-      const row = stmt.getAsObject()
-      stmt.free()
-      const saved = JSON.parse(row.value)
-      return migrateSettings(saved)
+    if (fs.existsSync(filePath)) {
+      const content = fs.readFileSync(filePath, 'utf-8')
+      return JSON.parse(content)
     }
-    stmt.free()
   } catch {
-    // 返回默认设置
+    // 返回默认值
   }
-  
-  return getDefaultSettings()
+  return defaultValue
 }
 
-function migrateSettings(saved: any): AppSettings {
-  const defaults = getDefaultSettings()
-  
-  return {
-    tempMailPlus: {
-      username: saved.tempMailPlus?.username || saved.tempMail?.apiKey?.split('@')[0] || '',
-      epin: saved.tempMailPlus?.epin || '',
-      extension: saved.tempMailPlus?.extension || '@mailto.plus'
-    },
-    imapMail: {
-      server: saved.imapMail?.server || 'imap.qq.com',
-      port: saved.imapMail?.port || 993,
-      user: saved.imapMail?.user || saved.qqMail?.email || '',
-      pass: saved.imapMail?.pass || saved.qqMail?.authCode || '',
-      dir: saved.imapMail?.dir || 'INBOX',
-      protocol: saved.imapMail?.protocol || 'IMAP',
-      domain: saved.imapMail?.domain || saved.qqMail?.domain || ''
-    },
-    registration: saved.registration || defaults.registration,
-    domain: saved.domain || saved.qqMail?.domain || '',
-    theme: saved.theme || defaults.theme
-  }
-}
-
-export function saveSettings(settings: AppSettings): void {
-  if (!db) return
-  
-  db.run(
-    'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
-    ['appSettings', JSON.stringify(settings)]
-  )
-  
-  saveDatabase()
+function writeJsonFile<T>(filePath: string, data: T): void {
+  ensureDataDir()
+  fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8')
 }
 
 function getDefaultSettings(): AppSettings {
@@ -259,10 +111,112 @@ function getDefaultSettings(): AppSettings {
   }
 }
 
-export function closeDatabase(): void {
-  if (db) {
-    saveDatabase()
-    db.close()
-    db = null
+function getDefaultAccountsData(): AccountsData {
+  return { nextId: 1, accounts: [] }
+}
+
+function migrateSettings(saved: Partial<AppSettings>): AppSettings {
+  const defaults = getDefaultSettings()
+
+  return {
+    tempMailPlus: {
+      username: saved.tempMailPlus?.username ?? '',
+      epin: saved.tempMailPlus?.epin ?? '',
+      extension: saved.tempMailPlus?.extension ?? '@mailto.plus'
+    },
+    imapMail: {
+      server: saved.imapMail?.server ?? 'imap.qq.com',
+      port: saved.imapMail?.port ?? 993,
+      user: saved.imapMail?.user ?? '',
+      pass: saved.imapMail?.pass ?? '',
+      dir: saved.imapMail?.dir ?? 'INBOX',
+      protocol: saved.imapMail?.protocol ?? 'IMAP',
+      domain: saved.imapMail?.domain ?? ''
+    },
+    registration: saved.registration ?? defaults.registration,
+    domain: saved.domain ?? '',
+    theme: saved.theme ?? defaults.theme
   }
+}
+
+export async function initDatabase(): Promise<void> {
+  ensureDataDir()
+}
+
+export function getAllAccounts(): Account[] {
+  const data = readJsonFile<AccountsData>(ACCOUNTS_FILE, getDefaultAccountsData())
+  return data.accounts.slice().sort((a, b) => 
+    new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  )
+}
+
+export function addAccount(account: Omit<Account, 'id' | 'createdAt'>): Account {
+  const data = readJsonFile<AccountsData>(ACCOUNTS_FILE, getDefaultAccountsData())
+  
+  const newAccount: Account = {
+    id: data.nextId,
+    email: account.email,
+    password: account.password,
+    emailType: account.emailType,
+    status: account.status,
+    createdAt: new Date().toISOString(),
+    apiKey: account.apiKey,
+    apiKeyName: account.apiKeyName,
+    requestsLimit: account.requestsLimit
+  }
+  
+  data.nextId++
+  data.accounts.push(newAccount)
+  writeJsonFile(ACCOUNTS_FILE, data)
+  
+  return newAccount
+}
+
+export function deleteAccount(id: number): void {
+  const data = readJsonFile<AccountsData>(ACCOUNTS_FILE, getDefaultAccountsData())
+  data.accounts = data.accounts.filter(a => a.id !== id)
+  writeJsonFile(ACCOUNTS_FILE, data)
+}
+
+export function deleteAccounts(ids: number[]): void {
+  const data = readJsonFile<AccountsData>(ACCOUNTS_FILE, getDefaultAccountsData())
+  const idSet = new Set(ids)
+  data.accounts = data.accounts.filter(a => !idSet.has(a.id))
+  writeJsonFile(ACCOUNTS_FILE, data)
+}
+
+export function updateAccountStatus(id: number, status: AccountStatus): void {
+  const data = readJsonFile<AccountsData>(ACCOUNTS_FILE, getDefaultAccountsData())
+  const account = data.accounts.find(a => a.id === id)
+  if (account) {
+    account.status = status
+    writeJsonFile(ACCOUNTS_FILE, data)
+  }
+}
+
+export function exportAccounts(format: 'csv' | 'json'): string {
+  const accounts = getAllAccounts()
+
+  if (format === 'json') {
+    return JSON.stringify(accounts, null, 2)
+  }
+
+  const header = 'email,password,emailType,status,createdAt,apiKey,apiKeyName,requestsLimit'
+  const rows = accounts.map(a =>
+    `"${a.email}","${a.password}","${a.emailType}","${a.status}","${a.createdAt}","${a.apiKey || ''}","${a.apiKeyName || ''}","${a.requestsLimit || ''}"`
+  )
+  return [header, ...rows].join('\n')
+}
+
+export function getSettings(): AppSettings {
+  const saved = readJsonFile<Partial<AppSettings>>(SETTINGS_FILE, {})
+  return migrateSettings(saved)
+}
+
+export function saveSettings(settings: AppSettings): void {
+  writeJsonFile(SETTINGS_FILE, settings)
+}
+
+export function closeDatabase(): void {
+  // JSON 文件存储无需关闭操作
 }

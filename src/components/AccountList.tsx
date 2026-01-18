@@ -1,21 +1,19 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { 
   Search, 
   Download, 
   Trash2, 
-  CheckCircle, 
-  Clock, 
-  AlertTriangle,
   Eye,
   EyeOff,
   ChevronLeft,
   ChevronRight,
-  MoreHorizontal,
   Copy,
+  Check,
+  Key,
   X
 } from 'lucide-react'
-import type { Account, AccountStatus } from '../types'
+import type { Account } from '../types'
 
 interface AccountListProps {
   accounts: Account[]
@@ -94,97 +92,12 @@ function ConfirmModal({
   )
 }
 
-function DropdownMenu({
-  isOpen,
-  onClose,
-  onCopy,
-  onStatusChange,
-  onDelete,
-  currentStatus
-}: {
-  isOpen: boolean
-  onClose: () => void
-  onCopy: () => void
-  onStatusChange: (status: AccountStatus) => void
-  onDelete: () => void
-  currentStatus: AccountStatus
-}) {
-  const menuRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        onClose()
-      }
-    }
-    if (isOpen) {
-      document.addEventListener('mousedown', handleClickOutside)
-    }
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [isOpen, onClose])
-
-  if (!isOpen) return null
-
-  const statusOptions: { value: AccountStatus; label: string; icon: typeof CheckCircle }[] = [
-    { value: 'active', label: '有效', icon: CheckCircle },
-    { value: 'pending', label: '待验证', icon: Clock },
-    { value: 'invalid', label: '失效', icon: AlertTriangle },
-  ]
-
-  return (
-    <motion.div 
-      ref={menuRef}
-      initial={{ opacity: 0, scale: 0.95, y: -5 }}
-      animate={{ opacity: 1, scale: 1, y: 0 }}
-      exit={{ opacity: 0, scale: 0.95, y: -5 }}
-      className="absolute right-0 top-full mt-2 z-50 w-52 bg-card border border-border/50 rounded-xl shadow-xl overflow-hidden"
-    >
-      <button
-        onClick={() => { onCopy(); onClose() }}
-        className="w-full flex items-center gap-3 px-4 py-3 text-base hover:bg-secondary transition-colors cursor-pointer"
-      >
-        <Copy size={16} />
-        复制账户信息
-      </button>
-      <div className="border-t border-border/50">
-        <p className="px-4 py-2 text-sm text-muted-foreground">修改状态</p>
-        {statusOptions.map((opt) => {
-          const Icon = opt.icon
-          const isActive = currentStatus === opt.value
-          return (
-            <button
-              key={opt.value}
-              onClick={() => { onStatusChange(opt.value); onClose() }}
-              className={`w-full flex items-center gap-3 px-4 py-2.5 text-base hover:bg-secondary transition-colors cursor-pointer ${
-                isActive ? 'bg-secondary text-foreground' : ''
-              }`}
-            >
-              <Icon size={16} />
-              {opt.label}
-              {isActive && <span className="ml-auto text-sm text-muted-foreground">当前</span>}
-            </button>
-          )
-        })}
-      </div>
-      <div className="border-t border-border/50">
-        <button
-          onClick={() => { onDelete(); onClose() }}
-          className="w-full flex items-center gap-3 px-4 py-3 text-base text-destructive hover:bg-destructive/10 transition-colors cursor-pointer"
-        >
-          <Trash2 size={16} />
-          删除账户
-        </button>
-      </div>
-    </motion.div>
-  )
-}
-
 export default function AccountList({ accounts, setAccounts }: AccountListProps) {
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedIds, setSelectedIds] = useState<number[]>([])
   const [showPasswords, setShowPasswords] = useState<Record<number, boolean>>({})
+  const [copiedField, setCopiedField] = useState<{ id: number; field: 'password' | 'apiKey' } | null>(null)
   const [currentPage, setCurrentPage] = useState(1)
-  const [openMenuId, setOpenMenuId] = useState<number | null>(null)
   const [deleteModal, setDeleteModal] = useState<{ isOpen: boolean; ids: number[]; isSingle?: boolean }>({
     isOpen: false,
     ids: [],
@@ -249,18 +162,12 @@ export default function AccountList({ accounts, setAccounts }: AccountListProps)
     setDeleteModal({ isOpen: true, ids: [id], isSingle: true })
   }
 
-  const handleStatusChange = async (id: number, status: AccountStatus) => {
-    try {
-      await window.electronAPI?.updateAccountStatus?.(id, status)
-      setAccounts(prev => prev.map(a => a.id === id ? { ...a, status } : a))
-    } catch (error) {
-      console.error('更新账户状态失败:', error)
-    }
-  }
-
-  const handleCopyAccount = (account: Account) => {
-    const text = `邮箱: ${account.email}\n密码: ${account.password}`
-    navigator.clipboard.writeText(text).catch(console.error)
+  const handleCopy = (account: Account, field: 'password' | 'apiKey') => {
+    const value = field === 'password' ? account.password : account.apiKey
+    if (!value) return
+    navigator.clipboard.writeText(value)
+    setCopiedField({ id: account.id, field })
+    setTimeout(() => setCopiedField(null), 2000)
   }
 
   const handleExport = async (format: 'csv' | 'json') => {
@@ -283,20 +190,11 @@ export default function AccountList({ accounts, setAccounts }: AccountListProps)
     }
   }
 
-  const getStatusBadge = (status: AccountStatus) => {
-    const config = {
-      active: { bg: 'bg-emerald-500/10', text: 'text-emerald-500', border: 'border-emerald-500/20', label: '有效', Icon: CheckCircle },
-      pending: { bg: 'bg-accent/10', text: 'text-accent', border: 'border-accent/20', label: '待验证', Icon: Clock },
-      invalid: { bg: 'bg-destructive/10', text: 'text-destructive', border: 'border-destructive/20', label: '失效', Icon: AlertTriangle }
-    }
-    const { bg, text, border, label, Icon } = config[status]
-    
-    return (
-      <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-medium border ${bg} ${text} ${border}`}>
-        <Icon size={14} />
-        {label}
-      </span>
-    )
+  const formatEmail = (email: string) => {
+    if (email.length <= 10) return email
+    const [local, domain] = email.split('@')
+    if (!domain || local.length <= 4) return email
+    return `${local.slice(0, 4)}****@${domain}`
   }
 
   const getPaginationText = () => {
@@ -367,10 +265,10 @@ export default function AccountList({ accounts, setAccounts }: AccountListProps)
         transition={{ delay: 0.2 }}
       >
         <div className="overflow-x-auto">
-          <table className="w-full text-base text-left">
+          <table className="w-full text-base">
             <thead className="bg-secondary/50 text-muted-foreground font-medium">
               <tr>
-                <th className="px-6 py-4 w-14">
+                <th className="px-4 py-4 text-center w-12">
                   <input
                     type="checkbox"
                     checked={paginatedAccounts.length > 0 && selectedIds.length === paginatedAccounts.length}
@@ -378,18 +276,17 @@ export default function AccountList({ accounts, setAccounts }: AccountListProps)
                     className="w-5 h-5 rounded border-border text-primary focus:ring-primary cursor-pointer"
                   />
                 </th>
-                <th className="px-6 py-4">邮箱账户</th>
-                <th className="px-6 py-4">密码</th>
-                <th className="px-6 py-4">类型</th>
-                <th className="px-6 py-4">注册时间</th>
-                <th className="px-6 py-4">状态</th>
-                <th className="px-6 py-4 w-14"></th>
+                <th className="px-4 py-4 text-center">邮箱账户</th>
+                <th className="px-4 py-4 text-center">密码</th>
+                <th className="px-4 py-4 text-center">API Key</th>
+                <th className="px-4 py-4 text-center whitespace-nowrap">注册时间</th>
+                <th className="px-4 py-4 text-center whitespace-nowrap">操作</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border/50">
               {paginatedAccounts.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-6 py-16 text-center text-muted-foreground text-lg">
+                  <td colSpan={6} className="px-6 py-16 text-center text-muted-foreground text-lg">
                     {searchTerm ? '未找到匹配的账户' : '暂无账户数据'}
                   </td>
                 </tr>
@@ -404,7 +301,7 @@ export default function AccountList({ accounts, setAccounts }: AccountListProps)
                       selectedIds.includes(account.id) ? 'bg-primary/5' : ''
                     }`}
                   >
-                    <td className="px-6 py-4">
+                    <td className="px-4 py-4 text-center">
                       <input
                         type="checkbox"
                         checked={selectedIds.includes(account.id)}
@@ -412,52 +309,73 @@ export default function AccountList({ accounts, setAccounts }: AccountListProps)
                         className="w-5 h-5 rounded border-border text-primary focus:ring-primary cursor-pointer"
                       />
                     </td>
-                    <td className="px-6 py-4 font-medium font-mono">{account.email}</td>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-2 group/pass">
+                    <td className="px-4 py-4 font-medium font-mono text-center" title={account.email}>
+                      {formatEmail(account.email)}
+                    </td>
+                    <td className="px-4 py-4 text-center">
+                      <div className="inline-flex items-center gap-1.5">
                         <span className="font-mono text-muted-foreground">
                           {showPasswords[account.id] ? account.password : '••••••••'}
                         </span>
                         <button
                           onClick={() => togglePassword(account.id)}
-                          className="opacity-0 group-hover/pass:opacity-100 p-1.5 hover:bg-secondary rounded-lg text-muted-foreground transition-all cursor-pointer"
+                          className="p-1 hover:bg-secondary rounded text-muted-foreground transition-colors cursor-pointer"
                         >
-                          {showPasswords[account.id] ? <EyeOff size={16} /> : <Eye size={16} />}
+                          {showPasswords[account.id] ? <EyeOff size={14} /> : <Eye size={14} />}
                         </button>
+                        <motion.button
+                          onClick={() => handleCopy(account, 'password')}
+                          whileHover={{ scale: 1.1 }}
+                          whileTap={{ scale: 0.9 }}
+                          className="p-1 hover:bg-secondary rounded transition-colors cursor-pointer"
+                          title="复制密码"
+                        >
+                          {copiedField?.id === account.id && copiedField.field === 'password' ? (
+                            <Check size={14} className="text-emerald-500" />
+                          ) : (
+                            <Copy size={14} className="text-muted-foreground" />
+                          )}
+                        </motion.button>
                       </div>
                     </td>
-                    <td className="px-6 py-4">
-                      <span className={`inline-flex items-center px-3 py-1 rounded-lg text-sm font-medium ${
-                        account.emailType === 'tempmail_plus' 
-                          ? 'bg-primary/10 text-primary' 
-                          : 'bg-accent/10 text-accent'
-                      }`}>
-                        {account.emailType === 'tempmail_plus' ? 'TempMail+' : 'IMAP'}
-                      </span>
+                    <td className="px-4 py-4 text-center">
+                      {account.apiKey ? (
+                        <div className="inline-flex items-center gap-1.5">
+                          <Key size={14} className="text-emerald-500 shrink-0" />
+                          <span className="font-mono text-sm text-muted-foreground">
+                            {account.apiKey.slice(0, 3)}****{account.apiKey.slice(-3)}
+                          </span>
+                          <motion.button
+                            onClick={() => handleCopy(account, 'apiKey')}
+                            whileHover={{ scale: 1.1 }}
+                            whileTap={{ scale: 0.9 }}
+                            className="p-1 hover:bg-secondary rounded transition-colors cursor-pointer"
+                            title="复制 API Key"
+                          >
+                            {copiedField?.id === account.id && copiedField.field === 'apiKey' ? (
+                              <Check size={14} className="text-emerald-500" />
+                            ) : (
+                              <Copy size={14} className="text-muted-foreground" />
+                            )}
+                          </motion.button>
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground/50 text-sm">-</span>
+                      )}
                     </td>
-                    <td className="px-6 py-4 text-muted-foreground">
+                    <td className="px-4 py-4 text-muted-foreground text-center whitespace-nowrap">
                       {new Date(account.createdAt).toLocaleDateString('zh-CN')}
                     </td>
-                    <td className="px-6 py-4">{getStatusBadge(account.status)}</td>
-                    <td className="px-6 py-4 relative">
-                      <button 
-                        onClick={() => setOpenMenuId(openMenuId === account.id ? null : account.id)}
-                        className="p-2 hover:bg-secondary rounded-lg text-muted-foreground transition-colors cursor-pointer"
+                    <td className="px-4 py-4 text-center">
+                      <motion.button
+                        onClick={() => handleSingleDelete(account.id)}
+                        whileHover={{ scale: 1.1 }}
+                        whileTap={{ scale: 0.9 }}
+                        className="p-1.5 rounded text-destructive bg-destructive/10 hover:bg-destructive/20 transition-colors cursor-pointer"
+                        title="删除"
                       >
-                        <MoreHorizontal size={18} />
-                      </button>
-                      <AnimatePresence>
-                        {openMenuId === account.id && (
-                          <DropdownMenu
-                            isOpen={true}
-                            onClose={() => setOpenMenuId(null)}
-                            onCopy={() => handleCopyAccount(account)}
-                            onStatusChange={(status) => handleStatusChange(account.id, status)}
-                            onDelete={() => handleSingleDelete(account.id)}
-                            currentStatus={account.status}
-                          />
-                        )}
-                      </AnimatePresence>
+                        <Trash2 size={16} />
+                      </motion.button>
                     </td>
                   </motion.tr>
                 ))

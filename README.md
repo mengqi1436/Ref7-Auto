@@ -5,7 +5,13 @@
 <h1 align="center">REF7 Auto Register</h1>
 
 <p align="center">
-  <strong>一款优雅的自动化账户注册管理工具</strong>
+  <strong>一款优雅的 Context7自动化账户注册管理工具</strong>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/version-1.1.0-blue.svg" alt="Version 1.1.0">
+  <img src="https://img.shields.io/badge/platform-Windows-lightgrey.svg" alt="Platform">
+  <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License">
 </p>
 
 <p align="center">
@@ -20,14 +26,26 @@
 
 ## 项目简介
 
-REF7 Auto Register 是一款基于 Electron 的桌面应用程序，专为自动化账户注册流程而设计。它集成了智能浏览器自动化、邮件验证码自动获取、账户批量管理等功能，提供了一站式的注册解决方案。
+REF7 Auto Register 是一款基于 Electron 的桌面应用程序，专为 [Context7.com](https://context7.com) 自动化账户注册流程而设计。它集成了智能浏览器自动化、Cloudflare Turnstile 验证绕过、邮件验证码自动获取、账户与 API Key 批量管理等功能，提供了一站式的注册解决方案。
 
 应用采用现代化的 Cyberpunk 风格 UI 设计，支持深色/浅色主题切换，提供流畅的动画效果和优秀的用户体验。
+
+## 更新日志
+
+### v1.1.0
+- ✨ 新增 Context7.com 注册支持与 API Key 自动获取
+- 🔑 新增 API Key 管理功能，支持查看配额与使用情况
+- 🚀 优化浏览器自动化，增强反检测能力
+- 🖥️ 新增后台隐藏模式，浏览器窗口可自动隐藏到屏幕外
+- 💎 UI 优化：新增确认弹窗组件，提升交互体验
+- 🛠️ 重构数据库服务与 IPC 处理逻辑
 
 ## 功能特性
 
 ### 🚀 自动化注册
 - **智能浏览器自动化**：基于 puppeteer-real-browser，自动绕过 Cloudflare Turnstile 验证
+- **后台隐藏模式**：浏览器窗口可隐藏到屏幕外并从任务栏移除，实现真正的后台运行
+- **增强反检测**：禁用自动化特征检测，模拟真实浏览器指纹
 - **批量注册支持**：单次可配置注册 1-20 个账户
 - **随机密码生成**：自动生成包含大小写字母、数字和特殊字符的安全密码
 - **可配置注册间隔**：随机延迟策略，模拟人工行为
@@ -35,6 +53,11 @@ REF7 Auto Register 是一款基于 Electron 的桌面应用程序，专为自动
 ### 📧 双邮箱服务支持
 - **TempMail+ 临时邮箱**：无需自有域名，快速注册
 - **IMAP 邮箱服务**：支持自有域名邮箱，通过 IMAP/POP3 协议接收验证码
+
+### 🔑 API Key 管理
+- **自动获取 API Key**：注册完成后自动获取 Context7 API Key
+- **配额追踪**：显示每个账户的 API 请求配额和使用情况
+- **一键复制**：快速复制 API Key 到剪贴板
 
 ### 📊 账户管理
 - **账户状态追踪**：实时显示有效、待验证、失效账户统计
@@ -157,11 +180,20 @@ npm run electron:build
 
 进入 **账户列表** 页面：
 
-- 查看所有已注册账户
+- 查看所有已注册账户及其 API Key
 - 使用搜索框快速定位账户
 - 点击复选框批量选择账户
+- 一键复制 API Key 到剪贴板
 - 导出账户数据为 CSV 格式
 - 删除不需要的账户
+
+### 4. 使用 API Key
+
+注册成功后，每个账户都会自动获取 Context7 API Key：
+
+1. 在账户列表中找到目标账户
+2. 点击 API Key 旁的复制按钮
+3. 将 API Key 用于你的 Context7 API 调用
 
 ## 配置说明
 
@@ -172,7 +204,19 @@ npm run electron:build
 | 密码长度 | 生成密码的字符数 | 12 |
 | 注册间隔 | 批量注册时每个账户之间的等待时间 | 3-8 秒 |
 | 超时时间 | 等待验证码的最大时间 | 60 秒 |
-| 调试模式 | 是否显示浏览器窗口 | 关闭 |
+| 调试模式 | 是否显示浏览器窗口（关闭时使用后台隐藏模式） | 关闭 |
+
+### 账户数据字段
+
+| 字段 | 说明 |
+|------|------|
+| email | 注册邮箱地址 |
+| password | 账户密码 |
+| emailType | 邮箱类型 (tempmail_plus / imap) |
+| status | 账户状态 (active / pending / invalid) |
+| apiKey | Context7 API Key |
+| apiKeyName | API Key 名称 |
+| requestsLimit | API 请求配额限制 |
 
 ### 数据存储
 

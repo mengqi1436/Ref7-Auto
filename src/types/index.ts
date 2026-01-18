@@ -5,6 +5,9 @@ export interface Account {
   emailType: EmailType
   status: AccountStatus
   createdAt: string
+  apiKey?: string
+  apiKeyName?: string
+  requestsLimit?: number
 }
 
 export type AccountStatus = 'active' | 'pending' | 'invalid'
@@ -44,12 +47,29 @@ export interface RegistrationSettings {
   showBrowser: boolean
 }
 
+export interface Context7ApiKey {
+  name: string
+  key: string
+  createdAt: string
+  lastUsed: string | null
+}
+
+export interface Context7Info {
+  requestsUsed: number
+  requestsLimit: number
+  parsingTokens: number
+  seats: number
+  cost: string
+  apiKeys: Context7ApiKey[]
+}
+
 export interface AppSettings {
   tempMailPlus: TempMailPlusConfig
   imapMail: ImapMailConfig
   registration: RegistrationSettings
   domain: string
   theme: Theme
+  context7?: Context7Info
 }
 
 export type Theme = 'dark' | 'light' | 'system'
