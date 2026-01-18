@@ -27,7 +27,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 xdg-utils libatspi2.0-0 libuuid1 libsecret-1-0
+          sudo apt-get install -y libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 xdg-utils libatspi2.0-0 libuuid1 libsecret-1-0 libgbm1 libasound2
 
       - name: Cache Electron
         uses: actions/cache@v4
@@ -69,14 +69,11 @@ jobs:
         with:
           name: release-${{ matrix.os }}
           path: |
-            release/*.exe
-            release/*.zip
+            release/*Setup*.exe
+            release/*portable*.exe
             release/*.dmg
             release/*.AppImage
             release/*.deb
-            release/*.tar.gz
-            release/*.yml
-            release/*.blockmap
           if-no-files-found: ignore
 
       - name: Publish to GitHub Releases
@@ -84,13 +81,10 @@ jobs:
         with:
           draft: true
           files: |
-            release/*.exe
-            release/*.zip
+            release/*Setup*.exe
+            release/*portable*.exe
             release/*.dmg
             release/*.AppImage
             release/*.deb
-            release/*.tar.gz
-            release/*.yml
-            release/*.blockmap
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
