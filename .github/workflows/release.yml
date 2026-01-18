@@ -1,33 +1,43 @@
-name: Build and Release
+name: Release
 
 on:
   push:
     tags:
-      - 'v*.*.*'
+      - "v*"
+  workflow_dispatch:
 
 jobs:
   release:
-    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, macos-latest, windows-latest]
+        include:
+          - platform: macos-latest
+            build_cmd: npm run electron:build:mac
+          - platform: ubuntu-22.04
+            build_cmd: npm run electron:build:linux
+          - platform: windows-latest
+            build_cmd: npm run electron:build:win
+
+    runs-on: ${{ matrix.platform }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Install dependencies (Linux)
+        if: startsWith(matrix.platform, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libopenjp2-tools rpm
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
-
-      - name: Install Linux dependencies
-        if: matrix.os == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libopenjp2-tools rpm
 
       - name: Cache Electron
         uses: actions/cache@v4
@@ -39,35 +49,22 @@ jobs:
             ~/Library/Caches/electron-builder
             ~/AppData/Local/electron/Cache
             ~/AppData/Local/electron-builder/Cache
-          key: electron-${{ matrix.os }}-${{ hashFiles('package-lock.json') }}
+          key: electron-${{ matrix.platform }}-${{ hashFiles('package-lock.json') }}
           restore-keys: |
-            electron-${{ matrix.os }}-
+            electron-${{ matrix.platform }}-
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Build for Linux
-        if: matrix.os == 'ubuntu-22.04'
-        run: npm run electron:build:linux
-        env:
-          GH_TOKEN: ${{ secrets.GH_PAT }}
-
-      - name: Build for macOS
-        if: matrix.os == 'macos-latest'
-        run: npm run electron:build:mac
-        env:
-          GH_TOKEN: ${{ secrets.GH_PAT }}
-
-      - name: Build for Windows
-        if: matrix.os == 'windows-latest'
-        run: npm run electron:build:win
+      - name: Build the app
+        run: ${{ matrix.build_cmd }}
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: release-${{ matrix.os }}
+          name: release-${{ matrix.platform }}
           path: |
             release/*Setup*.exe
             release/*portable*.exe
@@ -78,6 +75,8 @@ jobs:
 
       - name: Publish to GitHub Releases
         uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
         with:
           draft: true
           files: |
@@ -86,5 +85,3 @@ jobs:
             release/*.dmg
             release/*.AppImage
             release/*.deb
-        env:
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
