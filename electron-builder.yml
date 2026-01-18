@@ -1,0 +1,38 @@
+appId: com.ref7.autoregister
+productName: REF7 Auto Register
+copyright: Copyright © 2026 REF7
+
+directories:
+  output: release
+  buildResources: assets
+
+files:
+  - dist/**/*
+  - dist-electron/**/*
+  - "!**/*.map"
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: assets/icon.png
+  artifactName: ${productName}-Setup-${version}.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: REF7 Auto Register
+  installerIcon: assets/icon.png
+  uninstallerIcon: assets/icon.png
+  installerHeaderIcon: assets/icon.png
+  license: LICENSE
+
+extraResources:
+  - from: assets/
+    to: assets/
+    filter:
+      - "**/*"
