@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { 
   Search, 
   Download, 
+  Upload,
   Trash2, 
   Eye,
   EyeOff,
@@ -103,6 +104,12 @@ export default function AccountList({ accounts, setAccounts }: AccountListProps)
     ids: [],
     isSingle: false
   })
+  const [importResult, setImportResult] = useState<{
+    isOpen: boolean
+    success: boolean
+    message: string
+    details?: string
+  }>({ isOpen: false, success: false, message: '' })
 
   const itemsPerPage = 10
 
@@ -170,23 +177,54 @@ export default function AccountList({ accounts, setAccounts }: AccountListProps)
     setTimeout(() => setCopiedField(null), 2000)
   }
 
-  const handleExport = async (format: 'csv' | 'json') => {
+  const handleExport = async () => {
     try {
-      await window.electronAPI?.exportAccounts?.(format)
-    } catch (error) {
-      console.error('导出失败:', error)
-      const data = format === 'json' 
-        ? JSON.stringify(accounts, null, 2)
-        : 'email,password,emailType,status,createdAt\n' + 
-          accounts.map(a => `"${a.email}","${a.password}","${a.emailType}","${a.status}","${a.createdAt}"`).join('\n')
-      
-      const blob = new Blob([data], { type: format === 'json' ? 'application/json' : 'text/csv' })
+      await window.electronAPI?.exportAccounts?.()
+    } catch {
+      const data = JSON.stringify(accounts, null, 2)
+      const blob = new Blob([data], { type: 'application/json' })
       const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `accounts.${format}`
-      a.click()
+      const link = document.createElement('a')
+      link.href = url
+      link.download = 'api.json'
+      link.click()
       URL.revokeObjectURL(url)
+    }
+  }
+
+  const handleImport = async () => {
+    try {
+      const result = await window.electronAPI?.importAccounts?.()
+      
+      if (!result) return
+
+      if (result.error) {
+        setImportResult({ isOpen: true, success: false, message: '导入失败', details: result.error })
+        return
+      }
+
+      const updatedAccounts = await window.electronAPI?.getAccounts?.()
+      if (updatedAccounts) setAccounts(updatedAccounts)
+
+      const details = [
+        result.imported && result.imported > 0 ? `成功导入 ${result.imported} 个账户` : '',
+        result.skipped && result.skipped > 0 ? `跳过 ${result.skipped} 个重复账户` : '',
+        result.errors?.length ? `${result.errors.length} 个错误` : ''
+      ].filter(Boolean).join('，')
+
+      setImportResult({
+        isOpen: true,
+        success: (result.imported ?? 0) > 0,
+        message: (result.imported ?? 0) > 0 ? '导入成功' : '无新账户导入',
+        details
+      })
+    } catch (error) {
+      setImportResult({
+        isOpen: true,
+        success: false,
+        message: '导入失败',
+        details: error instanceof Error ? error.message : '未知错误'
+      })
     }
   }
 
@@ -218,15 +256,27 @@ export default function AccountList({ accounts, setAccounts }: AccountListProps)
           <p className="text-lg text-muted-foreground mt-1">查看和管理已注册的账户信息</p>
         </div>
         <div className="flex items-center gap-3">
+          {/* 导入按钮 */}
           <motion.button 
-            onClick={() => handleExport('csv')}
+            onClick={handleImport}
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl border border-border/50 bg-background hover:bg-secondary transition-colors text-base font-medium cursor-pointer"
+          >
+            <Upload size={18} />
+            导入
+          </motion.button>
+          
+          <motion.button 
+            onClick={handleExport}
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
             className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl border border-border/50 bg-background hover:bg-secondary transition-colors text-base font-medium cursor-pointer"
           >
             <Download size={18} />
-            导出 CSV
+            导出
           </motion.button>
+          
           <motion.button 
             onClick={handleDelete}
             disabled={selectedIds.length === 0}
@@ -424,6 +474,62 @@ export default function AccountList({ accounts, setAccounts }: AccountListProps)
         cancelText="取消"
         variant="danger"
       />
+
+      {/* 导入结果弹窗 */}
+      <AnimatePresence>
+        {importResult.isOpen && (
+          <motion.div 
+            className="fixed inset-0 z-50 flex items-center justify-center"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          >
+            <div 
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm" 
+              onClick={() => setImportResult({ ...importResult, isOpen: false })} 
+            />
+            <motion.div 
+              className="relative bg-card border border-border/50 rounded-2xl shadow-2xl p-6 w-full max-w-md"
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+            >
+              <button 
+                onClick={() => setImportResult({ ...importResult, isOpen: false })}
+                className="absolute top-4 right-4 p-2 rounded-lg hover:bg-secondary text-muted-foreground cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+              
+              <div className="flex items-center gap-3 mb-4">
+                <div className={`p-3 rounded-full ${
+                  importResult.success 
+                    ? 'bg-emerald-500/10 text-emerald-500' 
+                    : 'bg-amber-500/10 text-amber-500'
+                }`}>
+                  {importResult.success ? <Check size={24} /> : <Upload size={24} />}
+                </div>
+                <h3 className="text-xl font-semibold">{importResult.message}</h3>
+              </div>
+              
+              {importResult.details && (
+                <p className="text-base text-muted-foreground mb-6">{importResult.details}</p>
+              )}
+              
+              <div className="flex justify-end">
+                <motion.button
+                  onClick={() => setImportResult({ ...importResult, isOpen: false })}
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  className="px-5 py-2.5 rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 transition-colors text-base font-medium cursor-pointer"
+                >
+                  确定
+                </motion.button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }

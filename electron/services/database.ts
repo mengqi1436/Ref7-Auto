@@ -41,13 +41,15 @@ export interface RegistrationSettings {
   intervalMax: number
   timeout: number
   showBrowser: boolean
+  defaultBatchCount: number
+  maxBatchCount: number
 }
 
 export interface AppSettings {
   tempMailPlus: TempMailPlusConfig
   imapMail: ImapMailConfig
   registration: RegistrationSettings
-  domain: string
+  defaultEmailType: EmailType
   theme: Theme
 }
 
@@ -73,7 +75,7 @@ function readJsonFile<T>(filePath: string, defaultValue: T): T {
       return JSON.parse(content)
     }
   } catch {
-    // 返回默认值
+    return defaultValue
   }
   return defaultValue
 }
@@ -104,9 +106,11 @@ function getDefaultSettings(): AppSettings {
       intervalMin: 3,
       intervalMax: 8,
       timeout: 60,
-      showBrowser: false
+      showBrowser: false,
+      defaultBatchCount: 1,
+      maxBatchCount: 20
     },
-    domain: '',
+    defaultEmailType: 'tempmail_plus',
     theme: 'system'
   }
 }
@@ -115,7 +119,7 @@ function getDefaultAccountsData(): AccountsData {
   return { nextId: 1, accounts: [] }
 }
 
-function migrateSettings(saved: Partial<AppSettings>): AppSettings {
+function migrateSettings(saved: Partial<AppSettings> & { domain?: string }): AppSettings {
   const defaults = getDefaultSettings()
 
   return {
@@ -131,10 +135,18 @@ function migrateSettings(saved: Partial<AppSettings>): AppSettings {
       pass: saved.imapMail?.pass ?? '',
       dir: saved.imapMail?.dir ?? 'INBOX',
       protocol: saved.imapMail?.protocol ?? 'IMAP',
-      domain: saved.imapMail?.domain ?? ''
+      domain: saved.imapMail?.domain ?? saved.domain ?? ''
     },
-    registration: saved.registration ?? defaults.registration,
-    domain: saved.domain ?? '',
+    registration: {
+      passwordLength: saved.registration?.passwordLength ?? defaults.registration.passwordLength,
+      intervalMin: saved.registration?.intervalMin ?? defaults.registration.intervalMin,
+      intervalMax: saved.registration?.intervalMax ?? defaults.registration.intervalMax,
+      timeout: saved.registration?.timeout ?? defaults.registration.timeout,
+      showBrowser: saved.registration?.showBrowser ?? defaults.registration.showBrowser,
+      defaultBatchCount: saved.registration?.defaultBatchCount ?? defaults.registration.defaultBatchCount,
+      maxBatchCount: saved.registration?.maxBatchCount ?? defaults.registration.maxBatchCount
+    },
+    defaultEmailType: saved.defaultEmailType ?? defaults.defaultEmailType,
     theme: saved.theme ?? defaults.theme
   }
 }
@@ -194,18 +206,50 @@ export function updateAccountStatus(id: number, status: AccountStatus): void {
   }
 }
 
-export function exportAccounts(format: 'csv' | 'json'): string {
-  const accounts = getAllAccounts()
+export function exportAccounts(): string {
+  return JSON.stringify(getAllAccounts(), null, 2)
+}
 
-  if (format === 'json') {
-    return JSON.stringify(accounts, null, 2)
+export interface ImportResult {
+  total: number
+  imported: number
+  skipped: number
+  errors: string[]
+}
+
+export function importAccounts(accountsToImport: Partial<Account>[]): ImportResult {
+  const data = readJsonFile<AccountsData>(ACCOUNTS_FILE, getDefaultAccountsData())
+  const existingEmails = new Set(data.accounts.map(a => a.email.toLowerCase()))
+  const result: ImportResult = { total: accountsToImport.length, imported: 0, skipped: 0, errors: [] }
+
+  for (const account of accountsToImport) {
+    if (!account.email || !account.password) {
+      result.errors.push(`缺少必填字段: ${account.email || '未知邮箱'}`)
+      continue
+    }
+
+    if (existingEmails.has(account.email.toLowerCase())) {
+      result.skipped++
+      continue
+    }
+
+    data.accounts.push({
+      id: data.nextId++,
+      email: account.email,
+      password: account.password,
+      emailType: account.emailType || 'tempmail_plus',
+      status: account.status || 'active',
+      createdAt: account.createdAt || new Date().toISOString(),
+      apiKey: account.apiKey,
+      apiKeyName: account.apiKeyName,
+      requestsLimit: account.requestsLimit
+    })
+    existingEmails.add(account.email.toLowerCase())
+    result.imported++
   }
 
-  const header = 'email,password,emailType,status,createdAt,apiKey,apiKeyName,requestsLimit'
-  const rows = accounts.map(a =>
-    `"${a.email}","${a.password}","${a.emailType}","${a.status}","${a.createdAt}","${a.apiKey || ''}","${a.apiKeyName || ''}","${a.requestsLimit || ''}"`
-  )
-  return [header, ...rows].join('\n')
+  if (result.imported > 0) writeJsonFile(ACCOUNTS_FILE, data)
+  return result
 }
 
 export function getSettings(): AppSettings {
@@ -217,6 +261,4 @@ export function saveSettings(settings: AppSettings): void {
   writeJsonFile(SETTINGS_FILE, settings)
 }
 
-export function closeDatabase(): void {
-  // JSON 文件存储无需关闭操作
-}
+export function closeDatabase(): void {}

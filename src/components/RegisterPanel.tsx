@@ -30,14 +30,28 @@ export default function RegisterPanel({
   defaultEmailType = 'tempmail_plus'
 }: RegisterPanelProps) {
   const [emailType, setEmailType] = useState<EmailType>(defaultEmailType)
-  const [batchCount, setBatchCount] = useState(1)
-  const [showBrowser, setShowBrowser] = useState(false)
+  const [batchCount, setBatchCount] = useState(settings?.registration.defaultBatchCount ?? 1)
+  const [showBrowser, setShowBrowser] = useState(settings?.registration.showBrowser ?? false)
   const logsEndRef = useRef<HTMLDivElement>(null)
   const isRunningRef = useRef(false)
+
+  const maxBatchCount = settings?.registration.maxBatchCount ?? 20
 
   useEffect(() => {
     setEmailType(defaultEmailType)
   }, [defaultEmailType])
+
+  useEffect(() => {
+    if (settings?.registration.defaultBatchCount !== undefined) {
+      setBatchCount(settings.registration.defaultBatchCount)
+    }
+  }, [settings?.registration.defaultBatchCount])
+
+  useEffect(() => {
+    if (settings?.registration.showBrowser !== undefined) {
+      setShowBrowser(settings.registration.showBrowser)
+    }
+  }, [settings?.registration.showBrowser])
 
   useEffect(() => {
     isRunningRef.current = isRegistering
@@ -58,7 +72,7 @@ export default function RegisterPanel({
       return
     }
 
-    if (emailType === 'imap' && (!settings.imapMail.user || !settings.domain && !settings.imapMail.domain)) {
+    if (emailType === 'imap' && (!settings.imapMail.user || !settings.imapMail.domain)) {
       addLog('error', '请先配置 IMAP 邮箱和域名')
       return
     }
@@ -189,21 +203,21 @@ export default function RegisterPanel({
             <div className="space-y-4">
               <div className="flex justify-between items-center">
                 <label className="text-base font-medium text-muted-foreground">批量数量</label>
-                <span className="text-2xl font-bold text-primary font-mono">{batchCount}</span>
+                <span className="text-2xl font-black text-primary font-numeric">{batchCount}</span>
               </div>
               <input
                 type="range"
                 min="1"
-                max="20"
-                value={batchCount}
+                max={maxBatchCount}
+                value={Math.min(batchCount, maxBatchCount)}
                 onChange={(e) => setBatchCount(parseInt(e.target.value))}
                 disabled={isRegistering}
                 className="w-full h-2 bg-secondary rounded-lg appearance-none cursor-pointer accent-primary disabled:opacity-50"
               />
               <div className="flex justify-between text-sm text-muted-foreground">
                 <span>1</span>
-                <span>10</span>
-                <span>20</span>
+                <span>{Math.floor(maxBatchCount / 2)}</span>
+                <span>{maxBatchCount}</span>
               </div>
             </div>
 

@@ -8,9 +8,10 @@ module.exports = {
   theme: {
     extend: {
       fontFamily: {
-        sans: ['Inter', 'system-ui', 'sans-serif'],
-        mono: ['Fira Code', 'monospace'],
-        display: ['Inter', 'system-ui', 'sans-serif'],
+        sans: ['Space Grotesk', 'system-ui', 'sans-serif'],
+        mono: ['JetBrains Mono', 'monospace'],
+        display: ['Space Grotesk', 'system-ui', 'sans-serif'],
+        numeric: ['Orbitron', 'system-ui', 'sans-serif'],
       },
       fontSize: {
         'xs': ['0.8125rem', { lineHeight: '1.25rem' }],

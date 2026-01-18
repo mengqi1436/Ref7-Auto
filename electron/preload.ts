@@ -68,8 +68,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   deleteAccounts: (ids: number[]): Promise<void> => ipcRenderer.invoke('accounts:deleteMany', ids),
   updateAccountStatus: (id: number, status: AccountStatus): Promise<void> => 
     ipcRenderer.invoke('accounts:updateStatus', id, status),
-  exportAccounts: (format: 'csv' | 'json'): Promise<string | null> => 
-    ipcRenderer.invoke('accounts:export', format),
+  exportAccounts: (): Promise<string | null> => ipcRenderer.invoke('accounts:export'),
+  importAccounts: (): Promise<{
+    total?: number
+    imported?: number
+    skipped?: number
+    errors?: string[]
+    error?: string
+  } | null> => ipcRenderer.invoke('accounts:import'),
 
   startRegistration: (config: RegistrationConfig): Promise<void> => 
     ipcRenderer.invoke('register:start', config),
@@ -110,4 +116,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('register:error', handler)
     return () => ipcRenderer.removeListener('register:error', handler)
   },
+
+  openExternal: (url: string): Promise<boolean> => 
+    ipcRenderer.invoke('shell:openExternal', url),
+  
+  checkForUpdates: (): Promise<{
+    hasUpdate: boolean
+    currentVersion: string
+    latestVersion?: string
+    releaseUrl?: string
+    error?: string
+  }> => ipcRenderer.invoke('app:checkForUpdates'),
 })

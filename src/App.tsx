@@ -1,13 +1,14 @@
 import { useState, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { 
-  LayoutDashboard, Users, Play, Settings as SettingsIcon,
+  LayoutDashboard, Users, Play, Settings as SettingsIcon, Info,
   Moon, Sun, Monitor, Minus, Square, X, Zap
 } from 'lucide-react'
 import Dashboard from './components/Dashboard'
 import AccountList from './components/AccountList'
 import RegisterPanel from './components/RegisterPanel'
 import Settings from './components/Settings'
+import About from './components/About'
 import Notification, { NotificationItem, NotificationType } from './components/Notification'
 import logo from './assets/logo.png'
 import type { Page, Theme, Account, AppSettings, LogEntry, EmailType } from './types'
@@ -79,6 +80,12 @@ function App() {
   }, [])
 
   useEffect(() => {
+    if (settings?.defaultEmailType) {
+      setDefaultEmailType(settings.defaultEmailType)
+    }
+  }, [settings?.defaultEmailType])
+
+  useEffect(() => {
     loadSettings()
     loadAccounts()
     
@@ -104,8 +111,8 @@ function App() {
     const defaultSettings: AppSettings = {
       tempMailPlus: { username: '', epin: '', extension: '@mailto.plus' },
       imapMail: { server: 'imap.qq.com', port: 993, user: '', pass: '', dir: 'INBOX', protocol: 'IMAP', domain: '' },
-      registration: { passwordLength: 12, intervalMin: 3, intervalMax: 8, timeout: 60, showBrowser: false },
-      domain: '',
+      registration: { passwordLength: 12, intervalMin: 3, intervalMax: 8, timeout: 60, showBrowser: false, defaultBatchCount: 1, maxBatchCount: 20 },
+      defaultEmailType: 'tempmail_plus',
       theme: 'system'
     }
     
@@ -116,11 +123,12 @@ function App() {
           tempMailPlus: { ...defaultSettings.tempMailPlus, ...s.tempMailPlus },
           imapMail: { ...defaultSettings.imapMail, ...s.imapMail },
           registration: { ...defaultSettings.registration, ...s.registration },
-          domain: s.domain || '',
+          defaultEmailType: s.defaultEmailType || 'tempmail_plus',
           theme: s.theme || 'system'
         }
         setSettings(merged)
         setTheme(merged.theme)
+        setDefaultEmailType(merged.defaultEmailType)
       } else {
         setSettings(defaultSettings)
       }
@@ -149,10 +157,11 @@ function App() {
   }
 
   const navItems = [
-    { id: 'dashboard' as Page, icon: LayoutDashboard, label: '控制面板' },
-    { id: 'accounts' as Page, icon: Users, label: '账户列表' },
-    { id: 'register' as Page, icon: Play, label: '开始注册' },
-    { id: 'settings' as Page, icon: SettingsIcon, label: '系统设置' },
+    { id: 'dashboard' as Page, icon: LayoutDashboard, label: '首页' },
+    { id: 'accounts' as Page, icon: Users, label: '账户管理' },
+    { id: 'register' as Page, icon: Play, label: '注册' },
+    { id: 'settings' as Page, icon: SettingsIcon, label: '设置' },
+    { id: 'about' as Page, icon: Info, label: '关于' },
   ]
 
   const pageVariants = {
@@ -165,15 +174,17 @@ function App() {
     const content = (() => {
       switch (currentPage) {
         case 'dashboard':
-          return <Dashboard accounts={accounts} logs={logs} isRegistering={isRegistering} onNavigate={handleNavigate} />
+          return <Dashboard accounts={accounts} logs={logs} isRegistering={isRegistering} onNavigate={handleNavigate} settings={settings} />
         case 'accounts':
           return <AccountList accounts={accounts} setAccounts={setAccounts} />
         case 'register':
           return <RegisterPanel settings={settings} isRegistering={isRegistering} setIsRegistering={setIsRegistering} logs={logs} setLogs={setLogs} defaultEmailType={defaultEmailType} />
         case 'settings':
           return <Settings settings={settings} setSettings={setSettings} theme={theme} setTheme={setTheme} onNotify={addNotification} />
+        case 'about':
+          return <About />
         default:
-          return <Dashboard accounts={accounts} logs={logs} isRegistering={isRegistering} onNavigate={handleNavigate} />
+          return <Dashboard accounts={accounts} logs={logs} isRegistering={isRegistering} onNavigate={handleNavigate} settings={settings} />
       }
     })()
 
@@ -253,7 +264,7 @@ function App() {
 
       <footer className="h-10 flex items-center justify-between px-6 border-t border-border/50 glass text-sm">
         <div className="flex items-center gap-4 text-muted-foreground">
-          <span>账户总数: <span className="text-foreground font-medium">{accounts.length}</span></span>
+          <span>账户总数: <span className="text-foreground font-bold font-numeric">{accounts.length}</span></span>
         </div>
         <div className="flex items-center gap-4 text-muted-foreground">
           <span>v1.0.0</span>

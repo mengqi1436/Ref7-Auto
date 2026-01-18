@@ -1,4 +1,5 @@
-import { ipcMain, BrowserWindow, dialog } from 'electron'
+import { ipcMain, BrowserWindow, dialog, shell } from 'electron'
+import https from 'https'
 import fs from 'fs'
 import * as database from '../services/database'
 import {
@@ -179,7 +180,7 @@ function createEmailService(
   }
 
   const emailService = new ImapMailService(settings.imapMail)
-  const email = generateRandomEmail(settings.domain || settings.imapMail.domain)
+  const email = generateRandomEmail(settings.imapMail.domain)
   sendLog('info', `生成邮箱: ${email}`)
   return { email, emailService }
 }
@@ -233,17 +234,13 @@ export async function registerIpcHandlers(window: BrowserWindow): Promise<void> 
     database.updateAccountStatus(id, status)
   )
 
-  ipcMain.handle('accounts:export', async (_, format: 'csv' | 'json') => {
-    const content = database.exportAccounts(format)
+  ipcMain.handle('accounts:export', async () => {
+    const content = database.exportAccounts()
 
     const { filePath } = await dialog.showSaveDialog(mainWindow!, {
       title: '导出账户',
-      defaultPath: `accounts.${format}`,
-      filters: [
-        format === 'json'
-          ? { name: 'JSON', extensions: ['json'] }
-          : { name: 'CSV', extensions: ['csv'] }
-      ]
+      defaultPath: 'api.json',
+      filters: [{ name: 'JSON', extensions: ['json'] }]
     })
 
     if (filePath) {
@@ -252,6 +249,35 @@ export async function registerIpcHandlers(window: BrowserWindow): Promise<void> 
     }
 
     return null
+  })
+
+  ipcMain.handle('accounts:import', async () => {
+    const { filePaths } = await dialog.showOpenDialog(mainWindow!, {
+      title: '导入账户',
+      filters: [
+        { name: 'JSON', extensions: ['json'] }
+      ],
+      properties: ['openFile']
+    })
+
+    if (!filePaths || filePaths.length === 0) {
+      return null
+    }
+
+    try {
+      const content = fs.readFileSync(filePaths[0], 'utf-8')
+      const accounts = JSON.parse(content)
+      
+      if (!Array.isArray(accounts)) {
+        return { error: '导入文件格式错误：应为账户数组' }
+      }
+
+      const result = database.importAccounts(accounts)
+      return result
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '未知错误'
+      return { error: `导入失败: ${message}` }
+    }
   })
 
   ipcMain.handle('settings:get', () => database.getSettings())
@@ -281,4 +307,111 @@ export async function registerIpcHandlers(window: BrowserWindow): Promise<void> 
     stopRegistration()
     await closeBrowser()
   })
+
+  // 打开外部链接
+  ipcMain.handle('shell:openExternal', async (_, url: string) => {
+    try {
+      await shell.openExternal(url)
+      return true
+    } catch {
+      return false
+    }
+  })
+
+  // 检查更新
+  ipcMain.handle('app:checkForUpdates', async () => {
+    const currentVersion = '1.1.0'
+    const owner = 'mengqi1436'
+    const repo = 'Ref7-Auto'
+    
+    return new Promise((resolve) => {
+      const options = {
+        hostname: 'api.github.com',
+        path: `/repos/${owner}/${repo}/releases/latest`,
+        method: 'GET',
+        headers: {
+          'User-Agent': 'REF7-Auto-Register',
+          'Accept': 'application/vnd.github.v3+json'
+        }
+      }
+
+      const req = https.request(options, (res) => {
+        let data = ''
+        
+        res.on('data', (chunk) => {
+          data += chunk
+        })
+        
+        res.on('end', () => {
+          try {
+            if (res.statusCode === 200) {
+              const release = JSON.parse(data)
+              const latestVersion = release.tag_name?.replace(/^v/, '') || ''
+              const hasUpdate = compareVersions(latestVersion, currentVersion) > 0
+              
+              resolve({
+                hasUpdate,
+                currentVersion,
+                latestVersion,
+                releaseUrl: release.html_url
+              })
+            } else if (res.statusCode === 404) {
+              // 仓库没有发布任何 Release
+              resolve({
+                hasUpdate: false,
+                currentVersion,
+                latestVersion: currentVersion
+              })
+            } else {
+              resolve({
+                hasUpdate: false,
+                currentVersion,
+                error: `无法获取版本信息 (${res.statusCode})`
+              })
+            }
+          } catch {
+            resolve({
+              hasUpdate: false,
+              currentVersion,
+              error: '解析版本信息失败'
+            })
+          }
+        })
+      })
+
+      req.on('error', () => {
+        resolve({
+          hasUpdate: false,
+          currentVersion,
+          error: '网络连接失败'
+        })
+      })
+
+      req.setTimeout(10000, () => {
+        req.destroy()
+        resolve({
+          hasUpdate: false,
+          currentVersion,
+          error: '请求超时'
+        })
+      })
+
+      req.end()
+    })
+  })
+}
+
+// 比较版本号
+function compareVersions(v1: string, v2: string): number {
+  const parts1 = v1.split('.').map(Number)
+  const parts2 = v2.split('.').map(Number)
+  
+  for (let i = 0; i < Math.max(parts1.length, parts2.length); i++) {
+    const p1 = parts1[i] || 0
+    const p2 = parts2[i] || 0
+    if (p1 > p2) return 1
+    if (p1 < p2) return -1
+  }
+  
+  return 0
 }

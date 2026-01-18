@@ -45,6 +45,8 @@ export interface RegistrationSettings {
   intervalMax: number
   timeout: number
   showBrowser: boolean
+  defaultBatchCount: number
+  maxBatchCount: number
 }
 
 export interface Context7ApiKey {
@@ -63,13 +65,19 @@ export interface Context7Info {
   apiKeys: Context7ApiKey[]
 }
 
+export interface RefApiInfo {
+  requestsUsed: number
+  requestsLimit: number
+}
+
 export interface AppSettings {
   tempMailPlus: TempMailPlusConfig
   imapMail: ImapMailConfig
   registration: RegistrationSettings
-  domain: string
+  defaultEmailType: EmailType
   theme: Theme
   context7?: Context7Info
+  refApi?: RefApiInfo
 }
 
 export type Theme = 'dark' | 'light' | 'system'
@@ -82,4 +90,4 @@ export interface LogEntry {
   message: string
 }
 
-export type Page = 'dashboard' | 'accounts' | 'register' | 'settings'
+export type Page = 'dashboard' | 'accounts' | 'register' | 'settings' | 'about'

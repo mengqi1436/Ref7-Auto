@@ -1,265 +1,316 @@
 import { motion } from 'framer-motion'
-import { Users, CheckCircle, Clock, AlertTriangle, Activity, ArrowRight, Mail, Zap } from 'lucide-react'
-import type { Account, LogEntry, EmailType, Page } from '../types'
+import { 
+  Play, 
+  Users, 
+  Clock, 
+  CheckCircle, 
+  XCircle,
+  Terminal,
+  Activity,
+  ArrowRight,
+  Mail,
+  Server,
+  Copy,
+  Check,
+  Eye,
+  EyeOff
+} from 'lucide-react'
+import { useState } from 'react'
+import type { Account, LogEntry, EmailType, Page, AppSettings } from '../types'
 
 interface DashboardProps {
   accounts: Account[]
   logs: LogEntry[]
   isRegistering: boolean
   onNavigate: (page: Page, emailType?: EmailType) => void
+  settings: AppSettings | null
 }
 
-export default function Dashboard({ accounts, logs, isRegistering, onNavigate }: DashboardProps) {
+export default function Dashboard({ accounts, logs, isRegistering, onNavigate, settings: _settings }: DashboardProps) {
+  const [copiedId, setCopiedId] = useState<number | null>(null)
+  const [visiblePasswords, setVisiblePasswords] = useState<Set<number>>(new Set())
+  
+  const recentLogs = logs.slice(-6).reverse()
+  const recentAccounts = accounts.slice(0, 5)
+  
   const activeCount = accounts.filter(a => a.status === 'active').length
   const pendingCount = accounts.filter(a => a.status === 'pending').length
-  const invalidCount = accounts.filter(a => a.status === 'invalid').length
 
-  const activeRate = accounts.length > 0 
-    ? ((activeCount / accounts.length) * 100).toFixed(1) + '%' 
-    : '0%'
+  const handleCopy = async (account: Account) => {
+    const text = `${account.email}\n${account.password}`
+    await navigator.clipboard.writeText(text)
+    setCopiedId(account.id)
+    setTimeout(() => setCopiedId(null), 2000)
+  }
 
-  const stats = [
-    { 
-      label: '总账户数', 
-      value: accounts.length, 
-      icon: Users,
-      trend: `共 ${accounts.length} 个`,
-      color: 'text-primary',
-      bgColor: 'bg-primary/10',
-      borderColor: 'border-primary/20'
-    },
-    { 
-      label: '有效账户', 
-      value: activeCount, 
-      icon: CheckCircle, 
-      trend: activeRate,
-      color: 'text-emerald-500',
-      bgColor: 'bg-emerald-500/10',
-      borderColor: 'border-emerald-500/20'
-    },
-    { 
-      label: '待验证', 
-      value: pendingCount, 
-      icon: Clock, 
-      trend: pendingCount > 0 ? '需处理' : '无待处理',
-      color: 'text-accent',
-      bgColor: 'bg-accent/10',
-      borderColor: 'border-accent/20'
-    },
-    { 
-      label: '失效账户', 
-      value: invalidCount, 
-      icon: AlertTriangle, 
-      trend: invalidCount > 0 ? '需关注' : '状态良好',
-      color: 'text-destructive',
-      bgColor: 'bg-destructive/10',
-      borderColor: 'border-destructive/20'
-    },
-  ]
+  const togglePassword = (id: number) => {
+    setVisiblePasswords(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
 
-  const recentLogs = logs.slice(-8).reverse()
-
-  const containerVariants = {
-    hidden: { opacity: 0 },
-    show: {
-      opacity: 1,
-      transition: { staggerChildren: 0.05 }
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case 'active': return <CheckCircle size={14} className="text-emerald-500" />
+      case 'pending': return <Clock size={14} className="text-accent" />
+      default: return <XCircle size={14} className="text-destructive" />
     }
   }
 
-  const itemVariants = {
-    hidden: { opacity: 0, y: 20 },
-    show: { opacity: 1, y: 0 }
-  }
-
   return (
-    <div className="space-y-8 h-full">
-      {/* 头部 */}
-      <motion.div 
+    <div className="h-full flex flex-col gap-6">
+      <motion.header 
         className="flex items-center justify-between"
-        initial={{ opacity: 0, y: -20 }}
+        initial={{ opacity: 0, y: -16 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.3 }}
       >
         <div>
-          <h2 className="text-3xl font-bold tracking-tight">
-            <span className="text-primary">控制</span>面板
-          </h2>
-          <p className="text-lg text-muted-foreground mt-1">欢迎回来，这里是您的注册任务概览</p>
-        </div>
-        {isRegistering && (
-          <motion.div 
-            className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-accent/10 text-accent border border-accent/30"
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-          >
-            <motion.div
-              animate={{ rotate: 360 }}
-              transition={{ duration: 2, repeat: Infinity, ease: 'linear' }}
-            >
-              <Zap size={18} />
-            </motion.div>
-            <span className="text-base font-medium">任务运行中</span>
-          </motion.div>
-        )}
-      </motion.div>
-
-      {/* 统计卡片 */}
-      <motion.div 
-        className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5"
-        variants={containerVariants}
-        initial="hidden"
-        animate="show"
-      >
-        {stats.map((stat, index) => {
-          const Icon = stat.icon
-          return (
-            <motion.div 
-              key={stat.label}
-              variants={itemVariants}
-              whileHover={{ scale: 1.02, y: -2 }}
-              transition={{ type: 'spring', stiffness: 400 }}
-              className={`relative overflow-hidden rounded-2xl border ${stat.borderColor} bg-card p-6 cursor-pointer group`}
-            >
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-base font-medium text-muted-foreground">{stat.label}</p>
-                  <p className="mt-3 text-4xl font-bold tracking-tight">{stat.value}</p>
-                </div>
-                <motion.div 
-                  className={`p-3.5 rounded-xl ${stat.bgColor} ${stat.color}`}
-                  whileHover={{ scale: 1.1, rotate: 5 }}
-                >
-                  <Icon size={26} />
-                </motion.div>
-              </div>
-              <div className="mt-4 flex items-center text-sm text-muted-foreground">
-                <span className={`${stat.color} font-medium`}>{stat.trend}</span>
-              </div>
-              <div className={`absolute inset-0 ${stat.bgColor} opacity-0 group-hover:opacity-100 transition-opacity duration-300 -z-10`} />
-            </motion.div>
-          )
-        })}
-      </motion.div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* 实时日志 */}
-        <motion.div 
-          className="lg:col-span-2 rounded-2xl border border-border/50 bg-card overflow-hidden"
-          initial={{ opacity: 0, x: -20 }}
-          animate={{ opacity: 1, x: 0 }}
-          transition={{ delay: 0.2 }}
-        >
-          <div className="px-6 py-4 border-b border-border/50 flex items-center justify-between bg-secondary/30">
-            <div className="flex items-center gap-3">
-              <motion.div
-                animate={isRegistering ? { scale: [1, 1.2, 1] } : {}}
-                transition={{ duration: 1.5, repeat: Infinity }}
-              >
-                <Activity className={isRegistering ? 'text-accent' : 'text-muted-foreground'} size={20} />
-              </motion.div>
-              <h3 className="font-semibold text-lg">实时运行日志</h3>
-            </div>
-            <span className="text-sm text-muted-foreground font-mono bg-secondary px-3 py-1 rounded-lg">
-              LIVE
+          <h1 className="text-3xl font-bold tracking-tight">
+            <span className="bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
+              控制面板
             </span>
-          </div>
-          <div className="p-0 overflow-auto max-h-[350px]">
-            {recentLogs.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
-                <Activity className="mb-4 opacity-20" size={52} />
-                <p className="text-lg">暂无日志记录</p>
-                <p className="text-base mt-2 opacity-60">开始注册任务后将在此显示日志</p>
-              </div>
-            ) : (
-              <div className="divide-y divide-border/50">
-                {recentLogs.map((log, index) => (
-                  <motion.div 
-                    key={log.id}
-                    initial={{ opacity: 0, x: -10 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: index * 0.03 }}
-                    className="flex items-start gap-4 px-6 py-3.5 text-base hover:bg-secondary/30 transition-colors"
-                  >
-                    <span className="font-mono text-sm text-muted-foreground mt-0.5 min-w-[85px]">
-                      {log.timestamp}
-                    </span>
-                    <span className={`flex-1 break-all ${
-                      log.type === 'error' ? 'text-destructive' :
-                      log.type === 'success' ? 'text-emerald-500' :
-                      log.type === 'warning' ? 'text-accent' :
-                      'text-foreground'
-                    }`}>
-                      {log.message}
-                    </span>
-                  </motion.div>
-                ))}
-              </div>
+          </h1>
+          <p className="text-muted-foreground mt-1">快速开始您的自动化注册任务</p>
+        </div>
+        
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-4 px-4 py-2 rounded-xl glass text-sm">
+            <span className="flex items-center gap-2">
+              <Users size={14} className="text-primary" />
+              <span className="font-numeric font-bold">{accounts.length}</span>
+              <span className="text-muted-foreground">账户</span>
+            </span>
+            <div className="w-px h-4 bg-border" />
+            <span className="flex items-center gap-2">
+              <CheckCircle size={14} className="text-emerald-500" />
+              <span className="font-numeric font-bold">{activeCount}</span>
+              <span className="text-muted-foreground">有效</span>
+            </span>
+            {pendingCount > 0 && (
+              <>
+                <div className="w-px h-4 bg-border" />
+                <span className="flex items-center gap-2">
+                  <Clock size={14} className="text-accent" />
+                  <span className="font-numeric font-bold">{pendingCount}</span>
+                  <span className="text-muted-foreground">待验证</span>
+                </span>
+              </>
             )}
           </div>
-        </motion.div>
+        </div>
+      </motion.header>
 
-        {/* 快速操作 */}
-        <motion.div 
-          className="space-y-5"
-          initial={{ opacity: 0, x: 20 }}
-          animate={{ opacity: 1, x: 0 }}
-          transition={{ delay: 0.3 }}
-        >
-          <div className="rounded-2xl border border-border/50 bg-card p-6">
-            <h3 className="font-semibold text-lg mb-5">快捷入口</h3>
-            <div className="space-y-3">
-              <motion.button 
-                onClick={() => onNavigate('register', 'tempmail_plus')}
-                whileHover={{ scale: 1.02, x: 5 }}
-                whileTap={{ scale: 0.98 }}
-                className="w-full flex items-center justify-between p-4 rounded-xl border border-border/50 bg-background hover:border-primary/50 hover:bg-primary/5 transition-all group cursor-pointer"
-              >
-                <div className="flex items-center gap-4">
-                  <div className="p-2.5 rounded-xl bg-primary/10 text-primary">
-                    <Mail size={20} />
-                  </div>
-                  <div className="text-left">
-                    <p className="font-medium text-base">TempMail+ 注册</p>
-                    <p className="text-sm text-muted-foreground">临时邮箱服务</p>
-                  </div>
-                </div>
-                <ArrowRight size={18} className="text-muted-foreground group-hover:text-primary group-hover:translate-x-1 transition-all" />
-              </motion.button>
-              
-              <motion.button 
-                onClick={() => onNavigate('register', 'imap')}
-                whileHover={{ scale: 1.02, x: 5 }}
-                whileTap={{ scale: 0.98 }}
-                className="w-full flex items-center justify-between p-4 rounded-xl border border-border/50 bg-background hover:border-accent/50 hover:bg-accent/5 transition-all group cursor-pointer"
-              >
-                <div className="flex items-center gap-4">
-                  <div className="p-2.5 rounded-xl bg-accent/10 text-accent">
-                    <Mail size={20} />
-                  </div>
-                  <div className="text-left">
-                    <p className="font-medium text-base">IMAP 邮箱注册</p>
-                    <p className="text-sm text-muted-foreground">使用自有域名</p>
-                  </div>
-                </div>
-                <ArrowRight size={18} className="text-muted-foreground group-hover:text-accent group-hover:translate-x-1 transition-all" />
-              </motion.button>
-            </div>
-          </div>
-
-          <motion.div 
-            className="rounded-2xl border border-primary/20 bg-gradient-to-br from-primary/5 to-transparent p-6"
-            whileHover={{ scale: 1.01 }}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 flex-1 min-h-0">
+        <div className="flex flex-col gap-5">
+          <motion.section 
+            className="rounded-2xl glass p-6 ring-1 ring-border/50"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.1 }}
           >
-            <div className="flex items-center gap-2 mb-3">
-              <Zap className="text-primary" size={20} />
-              <h3 className="font-semibold text-lg text-primary">专业提示</h3>
+            <h2 className="font-semibold mb-4 flex items-center gap-2">
+              <Play size={18} className="text-primary" />
+              快速开始
+            </h2>
+            
+            <div className="grid grid-cols-2 gap-3">
+              <motion.button
+                onClick={() => onNavigate('register', 'tempmail_plus')}
+                disabled={isRegistering}
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                className="relative overflow-hidden p-5 rounded-xl bg-gradient-to-br from-primary/10 to-primary/5 border border-primary/20 hover:border-primary/40 transition-all cursor-pointer group disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <div className="absolute top-0 right-0 w-20 h-20 bg-gradient-to-bl from-primary/10 to-transparent rounded-bl-full" />
+                <div className="relative">
+                  <div className="p-2.5 rounded-lg bg-primary/15 text-primary w-fit mb-3 group-hover:scale-110 transition-transform">
+                    <Mail size={20} />
+                  </div>
+                  <p className="font-semibold text-left">TempMail+</p>
+                  <p className="text-xs text-muted-foreground text-left mt-1">临时邮箱快速注册</p>
+                </div>
+                <ArrowRight size={16} className="absolute bottom-5 right-5 text-muted-foreground group-hover:text-primary group-hover:translate-x-1 transition-all" />
+              </motion.button>
+
+              <motion.button
+                onClick={() => onNavigate('register', 'imap')}
+                disabled={isRegistering}
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                className="relative overflow-hidden p-5 rounded-xl bg-gradient-to-br from-accent/10 to-accent/5 border border-accent/20 hover:border-accent/40 transition-all cursor-pointer group disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <div className="absolute top-0 right-0 w-20 h-20 bg-gradient-to-bl from-accent/10 to-transparent rounded-bl-full" />
+                <div className="relative">
+                  <div className="p-2.5 rounded-lg bg-accent/15 text-accent w-fit mb-3 group-hover:scale-110 transition-transform">
+                    <Server size={20} />
+                  </div>
+                  <p className="font-semibold text-left">IMAP 邮箱</p>
+                  <p className="text-xs text-muted-foreground text-left mt-1">使用自有域名注册</p>
+                </div>
+                <ArrowRight size={16} className="absolute bottom-5 right-5 text-muted-foreground group-hover:text-accent group-hover:translate-x-1 transition-all" />
+              </motion.button>
             </div>
-            <p className="text-base text-muted-foreground leading-relaxed">
-              建议开启"显示浏览器窗口"选项进行首次测试，以确保自动化流程与当前网络环境兼容。
-            </p>
-          </motion.div>
-        </motion.div>
+
+            {isRegistering && (
+              <motion.div 
+                className="mt-4 p-3 rounded-lg bg-accent/10 border border-accent/20 flex items-center gap-3"
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+              >
+                <motion.div
+                  className="w-2 h-2 rounded-full bg-accent"
+                  animate={{ scale: [1, 1.3, 1] }}
+                  transition={{ duration: 1, repeat: Infinity }}
+                />
+                <span className="text-sm text-accent font-medium">正在执行注册任务...</span>
+              </motion.div>
+            )}
+          </motion.section>
+
+          <motion.section 
+            className="flex-1 min-h-0 rounded-2xl glass overflow-hidden ring-1 ring-border/50 flex flex-col"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2 }}
+          >
+            <header className="px-5 py-3 border-b border-border/50 flex items-center justify-between bg-secondary/20 shrink-0">
+              <div className="flex items-center gap-2">
+                <Terminal size={16} className={isRegistering ? 'text-accent' : 'text-muted-foreground'} />
+                <h2 className="font-semibold text-sm">运行日志</h2>
+              </div>
+              <div className="flex items-center gap-1.5 text-xs font-mono">
+                <span className={`w-1.5 h-1.5 rounded-full ${isRegistering ? 'bg-emerald-500 animate-pulse' : 'bg-muted-foreground'}`} />
+                <span className="text-muted-foreground">{isRegistering ? 'LIVE' : 'IDLE'}</span>
+              </div>
+            </header>
+            <div className="flex-1 overflow-auto">
+              {recentLogs.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-full text-muted-foreground py-8">
+                  <Activity className="mb-3 opacity-20" size={32} />
+                  <p className="text-sm">等待任务开始</p>
+                </div>
+              ) : (
+                <ul className="divide-y divide-border/30">
+                  {recentLogs.map((log, index) => (
+                    <motion.li 
+                      key={log.id}
+                      initial={{ opacity: 0, x: -8 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: index * 0.02 }}
+                      className="flex items-start gap-3 px-4 py-2.5 text-sm hover:bg-secondary/30 transition-colors"
+                    >
+                      <time className="font-mono text-xs text-muted-foreground mt-0.5 min-w-[70px] tabular-nums">
+                        {log.timestamp}
+                      </time>
+                      <span className={`flex-1 break-all text-sm ${
+                        log.type === 'error' ? 'text-destructive' :
+                        log.type === 'success' ? 'text-emerald-500' :
+                        log.type === 'warning' ? 'text-accent' :
+                        'text-foreground'
+                      }`}>
+                        {log.message}
+                      </span>
+                    </motion.li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </motion.section>
+        </div>
+
+        <motion.section 
+          className="rounded-2xl glass overflow-hidden ring-1 ring-border/50 flex flex-col"
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.15 }}
+        >
+          <header className="px-5 py-3 border-b border-border/50 flex items-center justify-between bg-secondary/20 shrink-0">
+            <div className="flex items-center gap-2">
+              <Users size={16} className="text-primary" />
+              <h2 className="font-semibold text-sm">最近注册</h2>
+            </div>
+            {accounts.length > 5 && (
+              <motion.button
+                onClick={() => onNavigate('accounts')}
+                whileHover={{ x: 2 }}
+                className="text-xs text-muted-foreground hover:text-primary flex items-center gap-1 cursor-pointer"
+              >
+                查看全部 <ArrowRight size={12} />
+              </motion.button>
+            )}
+          </header>
+          
+          <div className="flex-1 overflow-auto">
+            {recentAccounts.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-full text-muted-foreground py-12">
+                <Users className="mb-3 opacity-20" size={40} />
+                <p className="font-medium">暂无账户</p>
+                <p className="text-sm mt-1 opacity-60">开始注册后账户将显示在这里</p>
+              </div>
+            ) : (
+              <ul className="divide-y divide-border/30">
+                {recentAccounts.map((account, index) => (
+                  <motion.li
+                    key={account.id}
+                    initial={{ opacity: 0, x: 8 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: index * 0.05 }}
+                    className="p-4 hover:bg-secondary/30 transition-colors"
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        {getStatusIcon(account.status)}
+                        <span className="font-medium text-sm truncate max-w-[200px]">{account.email}</span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <motion.button
+                          onClick={() => togglePassword(account.id)}
+                          whileHover={{ scale: 1.1 }}
+                          whileTap={{ scale: 0.9 }}
+                          className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                        >
+                          {visiblePasswords.has(account.id) ? <EyeOff size={14} /> : <Eye size={14} />}
+                        </motion.button>
+                        <motion.button
+                          onClick={() => handleCopy(account)}
+                          whileHover={{ scale: 1.1 }}
+                          whileTap={{ scale: 0.9 }}
+                          className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                        >
+                          {copiedId === account.id ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
+                        </motion.button>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono text-xs text-muted-foreground">
+                        {visiblePasswords.has(account.id) ? account.password : '••••••••••••'}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        {new Date(account.createdAt).toLocaleDateString('zh-CN')}
+                      </span>
+                    </div>
+                  </motion.li>
+                ))}
+              </ul>
+            )}
+          </div>
+          
+          {recentAccounts.length > 0 && (
+            <footer className="px-4 py-3 border-t border-border/50 bg-secondary/20 shrink-0">
+              <motion.button
+                onClick={() => onNavigate('accounts')}
+                whileHover={{ scale: 1.01 }}
+                whileTap={{ scale: 0.99 }}
+                className="w-full py-2 rounded-lg bg-primary/10 text-primary text-sm font-medium hover:bg-primary/20 transition-colors cursor-pointer"
+              >
+                管理所有账户
+              </motion.button>
+            </footer>
+          )}
+        </motion.section>
       </div>
     </div>
   )
