@@ -13,6 +13,17 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
+    sourcemap: false,
+    minify: 'esbuild',
+    target: 'esnext',
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ['react', 'react-dom'],
+          motion: ['framer-motion'],
+        },
+      },
+    },
   },
   server: {
     port: 8961,

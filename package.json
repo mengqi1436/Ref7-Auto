@@ -42,26 +42,5 @@
     "typescript": "^5.7.3",
     "vite": "^6.0.7",
     "wait-on": "^8.0.2"
-  },
-  "build": {
-    "appId": "com.ref7.autoregister",
-    "productName": "REF7 Auto Register",
-    "directories": {
-      "output": "release"
-    },
-    "files": [
-      "dist/**/*",
-      "dist-electron/**/*"
-    ],
-    "win": {
-      "target": "nsis",
-      "icon": "assets/icon.png"
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true
-    }
   }
 }
