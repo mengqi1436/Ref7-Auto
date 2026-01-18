@@ -267,7 +267,7 @@ function App() {
           <span>账户总数: <span className="text-foreground font-bold font-numeric">{accounts.length}</span></span>
         </div>
         <div className="flex items-center gap-4 text-muted-foreground">
-          <span>v1.0.0</span>
+          <span>v1.3.0</span>
           <span className="text-primary">REF7 Team</span>
         </div>
       </footer>

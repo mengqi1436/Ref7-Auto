@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.1.0-blue.svg" alt="Version 1.1.0">
+  <img src="https://img.shields.io/badge/version-1.3.0-blue.svg" alt="Version 1.3.0">
   <img src="https://img.shields.io/badge/platform-Windows-lightgrey.svg" alt="Platform">
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License">
 </p>
@@ -31,6 +31,9 @@ REF7 Auto Register 是一款基于 Electron 的桌面应用程序，专为 [Cont
 应用采用现代化的 Cyberpunk 风格 UI 设计，支持深色/浅色主题切换，提供流畅的动画效果和优秀的用户体验。
 
 ## 更新日志
+
+### v1.3.0
+- 🎉 版本更新
 
 ### v1.1.0
 - ✨ 新增 Context7.com 注册支持与 API Key 自动获取
