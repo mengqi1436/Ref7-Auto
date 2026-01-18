@@ -10,6 +10,11 @@ files:
   - dist/**/*
   - dist-electron/**/*
   - "!**/*.map"
+  - "!**/node_modules/**/test/**"
+  - "!**/node_modules/**/*.md"
+
+asar: true
+compression: maximum
 
 win:
   target:
@@ -28,9 +33,28 @@ mac:
       arch:
         - x64
         - arm64
+    - target: zip
+      arch:
+        - x64
+        - arm64
   icon: assets/icon.png
   artifactName: ${productName}-${version}-${os}-${arch}.${ext}
   category: public.app-category.utilities
+  hardenedRuntime: true
+  gatekeeperAssess: false
+
+dmg:
+  iconSize: 100
+  contents:
+    - x: 130
+      y: 220
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
+  window:
+    width: 540
+    height: 380
 
 linux:
   target:
@@ -43,10 +67,13 @@ linux:
   icon: assets/icon.png
   artifactName: ${productName}-${version}-${os}-${arch}.${ext}
   category: Utility
+  synopsis: REF7 自动化注册管理软件
+  description: 一款用于自动化管理和注册账号的桌面应用程序
 
 nsis:
   oneClick: false
   perMachine: false
+  allowElevation: true
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
@@ -61,3 +88,9 @@ extraResources:
     to: assets/
     filter:
       - "**/*"
+
+publish:
+  provider: github
+  owner: mengqi1436
+  repo: Ref7-Auto
+  releaseType: release
