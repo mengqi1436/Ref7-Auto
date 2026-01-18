@@ -9,9 +9,11 @@ directories:
 files:
   - dist/**/*
   - dist-electron/**/*
+  - package.json
   - "!**/*.map"
-  - "!**/node_modules/**/test/**"
-  - "!**/node_modules/**/*.md"
+  - "!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}"
+  - "!**/node_modules/*/{test,__tests__,tests,powered-test,example,examples}"
+  - "!**/node_modules/**/*.d.ts"
 
 asar: true
 compression: maximum
@@ -24,8 +26,12 @@ win:
     - target: portable
       arch:
         - x64
+    - target: zip
+      arch:
+        - x64
   icon: assets/icon.png
-  artifactName: ${productName}-${version}-${os}-${arch}.${ext}
+  artifactName: ${productName}-${version}-win-${arch}.${ext}
+  publisherName: REF7
 
 mac:
   target:
@@ -38,13 +44,13 @@ mac:
         - x64
         - arm64
   icon: assets/icon.png
-  artifactName: ${productName}-${version}-${os}-${arch}.${ext}
+  artifactName: ${productName}-${version}-mac-${arch}.${ext}
   category: public.app-category.utilities
   hardenedRuntime: true
   gatekeeperAssess: false
 
 dmg:
-  iconSize: 100
+  artifactName: ${productName}-${version}-mac-${arch}.${ext}
   contents:
     - x: 130
       y: 220
@@ -64,11 +70,15 @@ linux:
     - target: deb
       arch:
         - x64
+    - target: tar.gz
+      arch:
+        - x64
   icon: assets/icon.png
-  artifactName: ${productName}-${version}-${os}-${arch}.${ext}
+  artifactName: ${productName}-${version}-linux-${arch}.${ext}
   category: Utility
   synopsis: REF7 自动化注册管理软件
-  description: 一款用于自动化管理和注册账号的桌面应用程序
+  description: 一款专为REF7平台设计的自动化账号注册管理工具
+  maintainer: REF7 <support@ref7.com>
 
 nsis:
   oneClick: false
@@ -81,7 +91,10 @@ nsis:
   installerIcon: assets/icon.png
   uninstallerIcon: assets/icon.png
   installerHeaderIcon: assets/icon.png
-  license: LICENSE
+  deleteAppDataOnUninstall: false
+
+portable:
+  artifactName: ${productName}-${version}-win-portable.${ext}
 
 extraResources:
   - from: assets/
