@@ -11,7 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-22.04, macos-latest, windows-latest]
 
     steps:
       - name: Checkout repository
@@ -24,10 +24,10 @@ jobs:
           cache: npm
 
       - name: Install Linux dependencies
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-22.04'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 xdg-utils libatspi2.0-0 libuuid1 libsecret-1-0 libgbm1 libasound2
+          sudo apt-get install -y libopenjp2-tools rpm
 
       - name: Cache Electron
         uses: actions/cache@v4
@@ -47,7 +47,7 @@ jobs:
         run: npm ci
 
       - name: Build for Linux
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-22.04'
         run: npm run electron:build:linux
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
