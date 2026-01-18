@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { 
   Mail, Key, Clock, Monitor, Save, RotateCcw, CheckCircle, AlertCircle,
@@ -42,39 +42,30 @@ export default function Settings({ settings, setSettings, theme, setTheme, onNot
     )
   }
 
-  const updateTempMailPlus = (key: keyof TempMailPlusConfig, value: string) => {
+  const updateTempMailPlus = useCallback((key: keyof TempMailPlusConfig, value: string) => {
     setSettings(prev => prev ? { ...prev, tempMailPlus: { ...prev.tempMailPlus, [key]: value } } : null)
     setTempMailStatus('idle')
-  }
+  }, [setSettings])
 
-  const updateImapMail = (key: keyof ImapMailConfig, value: string | number) => {
+  const updateImapMail = useCallback((key: keyof ImapMailConfig, value: string | number) => {
     setSettings(prev => prev ? { ...prev, imapMail: { ...prev.imapMail, [key]: value } } : null)
     setImapStatus('idle')
-  }
+  }, [setSettings])
 
-  const updateRegistration = (key: string, value: number | boolean) => {
-    setSettings(prev => {
-      if (!prev) return null
-      return {
-        ...prev,
-        registration: {
-          ...prev.registration,
-          [key]: value
-        }
-      }
-    })
-  }
+  const updateRegistration = useCallback((key: string, value: number | boolean) => {
+    setSettings(prev => prev ? { ...prev, registration: { ...prev.registration, [key]: value } } : null)
+  }, [setSettings])
 
-  const updateDefaultEmailType = (value: EmailType) => {
+  const updateDefaultEmailType = useCallback((value: EmailType) => {
     setSettings(prev => prev ? { ...prev, defaultEmailType: value } : null)
-  }
+  }, [setSettings])
 
-  const handleThemeChange = (newTheme: Theme) => {
+  const handleThemeChange = useCallback((newTheme: Theme) => {
     setTheme(newTheme)
     setSettings(prev => prev ? { ...prev, theme: newTheme } : null)
-  }
+  }, [setTheme, setSettings])
 
-  const testTempMailPlus = async () => {
+  const testTempMailPlus = useCallback(async () => {
     setTestingTempMail(true)
     setTempMailStatus('idle')
     try {
@@ -86,9 +77,9 @@ export default function Settings({ settings, setSettings, theme, setTheme, onNot
       onNotify?.('error', 'TempMail+ 连接测试出错')
     }
     setTestingTempMail(false)
-  }
+  }, [settings.tempMailPlus, onNotify])
 
-  const testImapMail = async () => {
+  const testImapMail = useCallback(async () => {
     setTestingImap(true)
     setImapStatus('idle')
     try {
@@ -100,9 +91,9 @@ export default function Settings({ settings, setSettings, theme, setTheme, onNot
       onNotify?.('error', 'IMAP 连接测试出错')
     }
     setTestingImap(false)
-  }
+  }, [settings.imapMail, onNotify])
 
-  const saveSettings = async () => {
+  const saveSettings = useCallback(async () => {
     setSaving(true)
     try {
       await window.electronAPI?.saveSettings?.(settings)
@@ -113,9 +104,9 @@ export default function Settings({ settings, setSettings, theme, setTheme, onNot
     }
     await new Promise(r => setTimeout(r, 500))
     setSaving(false)
-  }
+  }, [settings, onNotify])
 
-  const resetSettings = () => {
+  const resetSettings = useCallback(() => {
     setSettings({
       tempMailPlus: { username: '', epin: '', extension: '@mailto.plus' },
       imapMail: { server: 'imap.qq.com', port: 993, user: '', pass: '', dir: 'INBOX', protocol: 'IMAP', domain: '' },
@@ -127,7 +118,7 @@ export default function Settings({ settings, setSettings, theme, setTheme, onNot
     setTempMailStatus('idle')
     setImapStatus('idle')
     onNotify?.('info', '设置已重置')
-  }
+  }, [setSettings, setTheme, onNotify])
 
   const themeOptions: { value: Theme; label: string; icon: typeof Sun }[] = [
     { value: 'light', label: '浅色', icon: Sun },

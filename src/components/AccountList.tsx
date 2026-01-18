@@ -1,18 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { 
-  Search, 
-  Download, 
-  Upload,
-  Trash2, 
-  Eye,
-  EyeOff,
-  ChevronLeft,
-  ChevronRight,
-  Copy,
-  Check,
-  Key,
-  X
+  Search, Download, Upload, Trash2, Eye, EyeOff,
+  ChevronLeft, ChevronRight, Copy, Check, Key, X
 } from 'lucide-react'
 import type { Account } from '../types'
 
@@ -113,14 +103,16 @@ export default function AccountList({ accounts, setAccounts }: AccountListProps)
 
   const itemsPerPage = 10
 
-  const filteredAccounts = accounts.filter(account => 
-    account.email.toLowerCase().includes(searchTerm.toLowerCase())
+  const filteredAccounts = useMemo(() => 
+    accounts.filter(account => account.email.toLowerCase().includes(searchTerm.toLowerCase())),
+    [accounts, searchTerm]
   )
 
-  const totalPages = Math.max(1, Math.ceil(filteredAccounts.length / itemsPerPage))
-  const paginatedAccounts = filteredAccounts.slice(
-    (currentPage - 1) * itemsPerPage,
-    currentPage * itemsPerPage
+  const totalPages = useMemo(() => Math.max(1, Math.ceil(filteredAccounts.length / itemsPerPage)), [filteredAccounts.length])
+  
+  const paginatedAccounts = useMemo(() => 
+    filteredAccounts.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage),
+    [filteredAccounts, currentPage]
   )
 
   useEffect(() => {
@@ -129,25 +121,21 @@ export default function AccountList({ accounts, setAccounts }: AccountListProps)
     }
   }, [currentPage, totalPages])
 
-  const toggleSelectAll = () => {
-    if (selectedIds.length === paginatedAccounts.length) {
-      setSelectedIds([])
-    } else {
-      setSelectedIds(paginatedAccounts.map(a => a.id))
-    }
-  }
-
-  const toggleSelect = (id: number) => {
+  const toggleSelectAll = useCallback(() => {
     setSelectedIds(prev => 
-      prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
+      prev.length === paginatedAccounts.length ? [] : paginatedAccounts.map(a => a.id)
     )
-  }
+  }, [paginatedAccounts])
 
-  const togglePassword = (id: number) => {
+  const toggleSelect = useCallback((id: number) => {
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id])
+  }, [])
+
+  const togglePassword = useCallback((id: number) => {
     setShowPasswords(prev => ({ ...prev, [id]: !prev[id] }))
-  }
+  }, [])
 
-  const handleDeleteConfirm = async () => {
+  const handleDeleteConfirm = useCallback(async () => {
     const ids = deleteModal.ids
     if (ids.length === 0) return
     
@@ -158,31 +146,30 @@ export default function AccountList({ accounts, setAccounts }: AccountListProps)
     }
     setAccounts(prev => prev.filter(a => !ids.includes(a.id)))
     setSelectedIds(prev => prev.filter(id => !ids.includes(id)))
-  }
+  }, [deleteModal.ids, setAccounts])
 
-  const handleDelete = () => {
+  const handleDelete = useCallback(() => {
     if (selectedIds.length === 0) return
     setDeleteModal({ isOpen: true, ids: selectedIds, isSingle: false })
-  }
+  }, [selectedIds])
 
-  const handleSingleDelete = (id: number) => {
+  const handleSingleDelete = useCallback((id: number) => {
     setDeleteModal({ isOpen: true, ids: [id], isSingle: true })
-  }
+  }, [])
 
-  const handleCopy = (account: Account, field: 'password' | 'apiKey') => {
+  const handleCopy = useCallback((account: Account, field: 'password' | 'apiKey') => {
     const value = field === 'password' ? account.password : account.apiKey
     if (!value) return
     navigator.clipboard.writeText(value)
     setCopiedField({ id: account.id, field })
     setTimeout(() => setCopiedField(null), 2000)
-  }
+  }, [])
 
-  const handleExport = async () => {
+  const handleExport = useCallback(async () => {
     try {
       await window.electronAPI?.exportAccounts?.()
     } catch {
-      const data = JSON.stringify(accounts, null, 2)
-      const blob = new Blob([data], { type: 'application/json' })
+      const blob = new Blob([JSON.stringify(accounts, null, 2)], { type: 'application/json' })
       const url = URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = url
@@ -190,12 +177,11 @@ export default function AccountList({ accounts, setAccounts }: AccountListProps)
       link.click()
       URL.revokeObjectURL(url)
     }
-  }
+  }, [accounts])
 
-  const handleImport = async () => {
+  const handleImport = useCallback(async () => {
     try {
       const result = await window.electronAPI?.importAccounts?.()
-      
       if (!result) return
 
       if (result.error) {
@@ -226,21 +212,21 @@ export default function AccountList({ accounts, setAccounts }: AccountListProps)
         details: error instanceof Error ? error.message : '未知错误'
       })
     }
-  }
+  }, [setAccounts])
 
-  const formatEmail = (email: string) => {
+  const formatEmail = useCallback((email: string) => {
     if (email.length <= 10) return email
     const [local, domain] = email.split('@')
     if (!domain || local.length <= 4) return email
     return `${local.slice(0, 4)}****@${domain}`
-  }
+  }, [])
 
-  const getPaginationText = () => {
+  const paginationText = useMemo(() => {
     if (filteredAccounts.length === 0) return '暂无数据'
     const start = (currentPage - 1) * itemsPerPage + 1
     const end = Math.min(currentPage * itemsPerPage, filteredAccounts.length)
     return `显示 ${start}-${end} / 共 ${filteredAccounts.length} 条`
-  }
+  }, [filteredAccounts.length, currentPage])
 
   return (
     <div className="space-y-6">
@@ -256,7 +242,6 @@ export default function AccountList({ accounts, setAccounts }: AccountListProps)
           <p className="text-lg text-muted-foreground mt-1">查看和管理已注册的账户信息</p>
         </div>
         <div className="flex items-center gap-3">
-          {/* 导入按钮 */}
           <motion.button 
             onClick={handleImport}
             whileHover={{ scale: 1.02 }}
@@ -290,7 +275,6 @@ export default function AccountList({ accounts, setAccounts }: AccountListProps)
         </div>
       </motion.div>
 
-      {/* 搜索栏 */}
       <motion.div 
         className="relative"
         initial={{ opacity: 0, y: 10 }}
@@ -307,7 +291,6 @@ export default function AccountList({ accounts, setAccounts }: AccountListProps)
         />
       </motion.div>
 
-      {/* 表格 */}
       <motion.div 
         className="rounded-2xl border border-border/50 bg-card overflow-hidden"
         initial={{ opacity: 0, y: 20 }}
@@ -434,9 +417,8 @@ export default function AccountList({ accounts, setAccounts }: AccountListProps)
           </table>
         </div>
         
-        {/* 分页 */}
         <div className="px-6 py-4 border-t border-border/50 bg-secondary/30 flex items-center justify-between">
-          <p className="text-base text-muted-foreground">{getPaginationText()}</p>
+          <p className="text-base text-muted-foreground">{paginationText}</p>
           <div className="flex gap-2">
             <motion.button
               onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
@@ -475,7 +457,6 @@ export default function AccountList({ accounts, setAccounts }: AccountListProps)
         variant="danger"
       />
 
-      {/* 导入结果弹窗 */}
       <AnimatePresence>
         {importResult.isOpen && (
           <motion.div 

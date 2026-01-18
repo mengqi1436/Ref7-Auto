@@ -17,7 +17,7 @@ export default function About() {
   const [checking, setChecking] = useState(false)
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null)
 
-  const currentVersion = '1.1.0'
+  const currentVersion = '1.4.0'
   const githubUrl = 'https://github.com/mengqi1436/Ref7-Auto'
 
   const handleCheckUpdate = async () => {
@@ -76,7 +76,6 @@ export default function About() {
       initial="hidden" 
       animate="show"
     >
-      {/* Logo 和应用名称 */}
       <motion.div className="flex flex-col items-center mb-8" variants={itemVariants}>
         <div className="relative mb-6">
           <motion.img 
@@ -103,12 +102,10 @@ export default function About() {
         </div>
       </motion.div>
 
-      {/* 信息卡片 */}
       <motion.div 
         className="grid grid-cols-2 gap-4 mb-8 w-full max-w-md"
         variants={itemVariants}
       >
-        {/* 作者 */}
         <motion.div 
           className="flex flex-col items-center p-5 rounded-2xl border border-border/50 bg-card hover:border-primary/30 transition-colors"
           whileHover={{ y: -2 }}
@@ -120,7 +117,6 @@ export default function About() {
           <span className="font-semibold text-foreground">mengqi1436</span>
         </motion.div>
 
-        {/* 开源地址 */}
         <motion.button 
           onClick={() => handleOpenLink(githubUrl)}
           className="flex flex-col items-center p-5 rounded-2xl border border-border/50 bg-card hover:border-accent/30 transition-colors cursor-pointer group"
@@ -137,7 +133,6 @@ export default function About() {
         </motion.button>
       </motion.div>
 
-      {/* 技术栈标签 */}
       <motion.div 
         className="flex items-center gap-3 mb-8"
         variants={itemVariants}
@@ -152,7 +147,6 @@ export default function About() {
         ))}
       </motion.div>
 
-      {/* 检测更新按钮 */}
       <motion.div className="flex flex-col items-center" variants={itemVariants}>
         <motion.button
           onClick={handleCheckUpdate}
@@ -174,7 +168,6 @@ export default function About() {
           {checking ? '检测中...' : '检测更新'}
         </motion.button>
 
-        {/* 更新结果显示 */}
         {updateInfo && (
           <motion.div 
             initial={{ opacity: 0, y: 10 }}

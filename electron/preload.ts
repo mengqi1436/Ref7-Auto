@@ -12,6 +12,9 @@ interface Account {
   emailType: EmailType
   status: AccountStatus
   createdAt: string
+  apiKey?: string
+  apiKeyName?: string
+  requestsLimit?: number
 }
 
 interface RegistrationConfig {
@@ -39,17 +42,21 @@ interface ImapMailConfig {
   domain: string
 }
 
+interface RegistrationSettings {
+  passwordLength: number
+  intervalMin: number
+  intervalMax: number
+  timeout: number
+  showBrowser: boolean
+  defaultBatchCount: number
+  maxBatchCount: number
+}
+
 interface AppSettings {
   tempMailPlus: TempMailPlusConfig
   imapMail: ImapMailConfig
-  registration: {
-    passwordLength: number
-    intervalMin: number
-    intervalMax: number
-    timeout: number
-    showBrowser: boolean
-  }
-  domain: string
+  registration: RegistrationSettings
+  defaultEmailType: EmailType
   theme: Theme
 }
 

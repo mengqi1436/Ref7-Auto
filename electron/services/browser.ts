@@ -80,7 +80,9 @@ async function hideAndMoveChromeOffscreen(): Promise<void> {
 }
 
 export async function initBrowser(options: BrowserServiceOptions): Promise<void> {
+  // 确保旧浏览器完全关闭
   if (browser) {
+    options.onLog('info', '正在关闭旧浏览器实例...')
     await closeBrowser()
   }
 
@@ -89,7 +91,7 @@ export async function initBrowser(options: BrowserServiceOptions): Promise<void>
     ? [...ANTI_DETECTION_ARGS, '--window-position=-3000,-3000']
     : [...ANTI_DETECTION_ARGS, '--start-maximized']
 
-  options.onLog('info', `正在启动浏览器 (${useHiddenMode ? '后台模式' : '可见模式'})...`)
+  options.onLog('info', `正在启动新浏览器 (${useHiddenMode ? '后台模式' : '可见模式'})...`)
 
   try {
     const response = await connect({
@@ -117,7 +119,7 @@ export async function initBrowser(options: BrowserServiceOptions): Promise<void>
       await hideAndMoveChromeOffscreen()
       options.onLog('success', '浏览器启动成功（已隐藏到后台）')
     } else {
-      options.onLog('success', '浏览器启动成功')
+      options.onLog('success', '浏览器启动成功（新指纹）')
     }
     isRunning = true
   } catch (error: unknown) {
@@ -634,7 +636,6 @@ export async function createContext7ApiKey(options: BrowserServiceOptions): Prom
 }
 
 export async function closeBrowser(): Promise<void> {
-  isRunning = false
   if (browser) {
     try {
       await browser.close()
@@ -644,6 +645,27 @@ export async function closeBrowser(): Promise<void> {
     browser = null
     page = null
   }
+  
+  // 强制终止所有 puppeteer 启动的 Chrome 进程
+  await killChromeProcesses()
+  
+  // 等待进程完全退出
+  await delay(2000)
+}
+
+async function killChromeProcesses(): Promise<void> {
+  try {
+    const cmd = process.platform === 'win32'
+      ? 'taskkill /F /IM chrome.exe /T 2>nul'
+      : 'pkill -9 chrome 2>/dev/null || true'
+    await execAsync(cmd)
+  } catch {
+    // 忽略错误（可能没有进程需要终止）
+  }
+}
+
+export function startRegistration(): void {
+  isRunning = true
 }
 
 export function stopRegistration(): void {

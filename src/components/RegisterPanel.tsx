@@ -1,15 +1,6 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { motion } from 'framer-motion'
-import { 
-  Play, 
-  Square, 
-  Mail, 
-  Settings2, 
-  Monitor,
-  Activity,
-  Zap,
-  Globe
-} from 'lucide-react'
+import { Play, Square, Mail, Settings2, Monitor, Activity, Zap, Globe } from 'lucide-react'
 import type { AppSettings, LogEntry, EmailType } from '../types'
 
 interface RegisterPanelProps {
@@ -61,7 +52,30 @@ export default function RegisterPanel({
     logsEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [logs])
 
-  const handleStart = async () => {
+  const delay = useCallback((ms: number) => new Promise(resolve => setTimeout(resolve, ms)), [])
+
+  const addLog = useCallback((type: LogEntry['type'], message: string) => {
+    setLogs(prev => [...prev, {
+      id: Date.now().toString(),
+      timestamp: new Date().toLocaleTimeString(),
+      type,
+      message
+    }])
+  }, [setLogs])
+
+  const simulateRegistration = useCallback(async () => {
+    for (let i = 0; i < batchCount; i++) {
+      if (!isRunningRef.current) break
+      await delay(1000)
+      addLog('info', `[模拟] 开始注册第 ${i + 1} 个账户...`)
+      if (!isRunningRef.current) break
+      await delay(2000)
+      addLog('success', `[模拟] 账户注册成功`)
+    }
+    addLog('info', '[模拟] 批量注册任务完成')
+  }, [batchCount, delay, addLog])
+
+  const handleStart = useCallback(async () => {
     if (!settings) {
       addLog('error', '请先配置邮箱设置')
       return
@@ -97,23 +111,9 @@ export default function RegisterPanel({
       setIsRegistering(false)
       isRunningRef.current = false
     }
-  }
+  }, [settings, emailType, batchCount, showBrowser, setIsRegistering, addLog, simulateRegistration])
 
-  const simulateRegistration = async () => {
-    for (let i = 0; i < batchCount; i++) {
-      if (!isRunningRef.current) break
-      await delay(1000)
-      addLog('info', `[模拟] 开始注册第 ${i + 1} 个账户...`)
-      if (!isRunningRef.current) break
-      await delay(2000)
-      addLog('success', `[模拟] 账户注册成功`)
-    }
-    addLog('info', '[模拟] 批量注册任务完成')
-  }
-
-  const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
-
-  const handleStop = async () => {
+  const handleStop = useCallback(async () => {
     isRunningRef.current = false
     setIsRegistering(false)
     try {
@@ -122,25 +122,14 @@ export default function RegisterPanel({
       console.error('停止注册失败:', error)
     }
     addLog('warning', '注册任务已停止')
-  }
+  }, [setIsRegistering, addLog])
 
-  const addLog = (type: LogEntry['type'], message: string) => {
-    setLogs(prev => [...prev, {
-      id: Date.now().toString(),
-      timestamp: new Date().toLocaleTimeString(),
-      type,
-      message
-    }])
-  }
-
-  const getLogBgClass = (type: LogEntry['type']) => {
-    switch (type) {
-      case 'error': return 'bg-destructive/10 text-destructive border-l-2 border-destructive'
-      case 'success': return 'bg-emerald-500/10 text-emerald-500 border-l-2 border-emerald-500'
-      case 'warning': return 'bg-accent/10 text-accent border-l-2 border-accent'
-      default: return 'text-foreground border-l-2 border-primary/30'
-    }
-  }
+  const getLogBgClass = useCallback((type: LogEntry['type']) => {
+    if (type === 'error') return 'bg-destructive/10 text-destructive border-l-2 border-destructive'
+    if (type === 'success') return 'bg-emerald-500/10 text-emerald-500 border-l-2 border-emerald-500'
+    if (type === 'warning') return 'bg-accent/10 text-accent border-l-2 border-accent'
+    return 'text-foreground border-l-2 border-primary/30'
+  }, [])
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[calc(100vh-10rem)]">

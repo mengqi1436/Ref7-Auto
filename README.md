@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.3.0-blue.svg" alt="Version 1.3.0">
+  <img src="https://img.shields.io/badge/version-1.4.0-blue.svg" alt="Version 1.4.0">
   <img src="https://img.shields.io/badge/platform-Windows-lightgrey.svg" alt="Platform">
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License">
 </p>
@@ -32,8 +32,16 @@ REF7 Auto Register 是一款基于 Electron 的桌面应用程序，专为 [Cont
 
 ## 更新日志
 
-### v1.3.0
-- 🎉 版本更新
+> 查看完整更新历史：[CHANGELOG.md](CHANGELOG.md)
+
+### v1.4.0 (2026-01-18)
+- ✨ 新增「关于」页面，支持在线检测更新
+- 📦 新增账户数据导入/导出功能（JSON 格式）
+- 🎨 全新设置页面 UI，分类标签式布局（通用/账号/高级）
+- 📊 Dashboard 重构优化，新增最近账户快速预览
+- 🔐 账户列表新增密码显示/隐藏切换
+- ⚙️ 新增批量注册参数配置（默认数量/最大数量）
+- 🛠️ 优化 IPC 处理逻辑与数据库服务
 
 ### v1.1.0
 - ✨ 新增 Context7.com 注册支持与 API Key 自动获取

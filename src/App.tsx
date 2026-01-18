@@ -174,7 +174,7 @@ function App() {
     const content = (() => {
       switch (currentPage) {
         case 'dashboard':
-          return <Dashboard accounts={accounts} logs={logs} isRegistering={isRegistering} onNavigate={handleNavigate} settings={settings} />
+          return <Dashboard accounts={accounts} logs={logs} isRegistering={isRegistering} onNavigate={handleNavigate} />
         case 'accounts':
           return <AccountList accounts={accounts} setAccounts={setAccounts} />
         case 'register':
@@ -184,7 +184,7 @@ function App() {
         case 'about':
           return <About />
         default:
-          return <Dashboard accounts={accounts} logs={logs} isRegistering={isRegistering} onNavigate={handleNavigate} settings={settings} />
+          return <Dashboard accounts={accounts} logs={logs} isRegistering={isRegistering} onNavigate={handleNavigate} />
       }
     })()
 
@@ -267,7 +267,7 @@ function App() {
           <span>账户总数: <span className="text-foreground font-bold font-numeric">{accounts.length}</span></span>
         </div>
         <div className="flex items-center gap-4 text-muted-foreground">
-          <span>v1.3.0</span>
+          <span>v1.4.0</span>
           <span className="text-primary">REF7 Team</span>
         </div>
       </footer>

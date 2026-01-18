@@ -1,64 +1,50 @@
+import { useState, useMemo, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import { 
-  Play, 
-  Users, 
-  Clock, 
-  CheckCircle, 
-  XCircle,
-  Terminal,
-  Activity,
-  ArrowRight,
-  Mail,
-  Server,
-  Copy,
-  Check,
-  Eye,
-  EyeOff
+  Play, Users, Clock, CheckCircle, XCircle, Terminal,
+  Activity, ArrowRight, Mail, Server, Copy, Check, Eye, EyeOff
 } from 'lucide-react'
-import { useState } from 'react'
-import type { Account, LogEntry, EmailType, Page, AppSettings } from '../types'
+import type { Account, LogEntry, EmailType, Page } from '../types'
 
 interface DashboardProps {
   accounts: Account[]
   logs: LogEntry[]
   isRegistering: boolean
   onNavigate: (page: Page, emailType?: EmailType) => void
-  settings: AppSettings | null
 }
 
-export default function Dashboard({ accounts, logs, isRegistering, onNavigate, settings: _settings }: DashboardProps) {
+export default function Dashboard({ accounts, logs, isRegistering, onNavigate }: DashboardProps) {
   const [copiedId, setCopiedId] = useState<number | null>(null)
   const [visiblePasswords, setVisiblePasswords] = useState<Set<number>>(new Set())
   
-  const recentLogs = logs.slice(-6).reverse()
-  const recentAccounts = accounts.slice(0, 5)
+  const recentLogs = useMemo(() => logs.slice(-6).reverse(), [logs])
+  const recentAccounts = useMemo(() => accounts.slice(0, 5), [accounts])
   
-  const activeCount = accounts.filter(a => a.status === 'active').length
-  const pendingCount = accounts.filter(a => a.status === 'pending').length
+  const { activeCount, pendingCount } = useMemo(() => ({
+    activeCount: accounts.filter(a => a.status === 'active').length,
+    pendingCount: accounts.filter(a => a.status === 'pending').length
+  }), [accounts])
 
-  const handleCopy = async (account: Account) => {
+  const handleCopy = useCallback(async (account: Account) => {
     const text = `${account.email}\n${account.password}`
     await navigator.clipboard.writeText(text)
     setCopiedId(account.id)
     setTimeout(() => setCopiedId(null), 2000)
-  }
+  }, [])
 
-  const togglePassword = (id: number) => {
+  const togglePassword = useCallback((id: number) => {
     setVisiblePasswords(prev => {
       const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
+      next.has(id) ? next.delete(id) : next.add(id)
       return next
     })
-  }
+  }, [])
 
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case 'active': return <CheckCircle size={14} className="text-emerald-500" />
-      case 'pending': return <Clock size={14} className="text-accent" />
-      default: return <XCircle size={14} className="text-destructive" />
-    }
-  }
+  const getStatusIcon = useCallback((status: string) => {
+    if (status === 'active') return <CheckCircle size={14} className="text-emerald-500" />
+    if (status === 'pending') return <Clock size={14} className="text-accent" />
+    return <XCircle size={14} className="text-destructive" />
+  }, [])
 
   return (
     <div className="h-full flex flex-col gap-6">

@@ -8,6 +8,7 @@ import {
   inputVerificationCode,
   createContext7ApiKey,
   closeBrowser,
+  startRegistration,
   stopRegistration,
   isRegistrationRunning
 } from '../services/browser'
@@ -76,9 +77,9 @@ async function handleRegistration(config: RegistrationConfig): Promise<void> {
   const settings = database.getSettings()
   const browserOptions = { headless: !config.showBrowser, onLog: sendLog }
 
-  try {
-    await initBrowser(browserOptions)
+  startRegistration()
 
+  try {
     for (let i = 0; i < config.count; i++) {
       if (!isRegistrationRunning()) {
         sendLog('warning', '注册已被用户停止')
@@ -90,71 +91,74 @@ async function handleRegistration(config: RegistrationConfig): Promise<void> {
       const { email, emailService } = createEmailService(config, settings)
       const password = generatePassword(config.passwordLength)
 
-      const success = await registerAccount({ email, password }, browserOptions)
-      if (!success) {
-        sendLog('error', `账户 ${email} 注册失败`)
-        continue
-      }
+      try {
+        await initBrowser(browserOptions)
 
-      sendLog('info', '等待验证码邮件...')
-      const verificationCode = await getVerificationCode(emailService, email, config, settings)
-
-      if (!verificationCode) {
-        sendLog('error', '获取验证码超时')
-        continue
-      }
-
-      sendLog('success', `验证码: ${verificationCode}`)
-
-      const verified = await inputVerificationCode(verificationCode, browserOptions)
-      if (verified) {
-        // 获取 Context7 API Key
-        sendLog('info', '开始获取 Context7 API Key...')
-        const apiKeyResult = await createContext7ApiKey(browserOptions)
-        
-        let apiKey: string | undefined
-        let apiKeyName: string | undefined
-        let requestsLimit: number | undefined
-        
-        if (apiKeyResult.success) {
-          apiKey = apiKeyResult.apiKey
-          apiKeyName = apiKeyResult.keyName
-          requestsLimit = apiKeyResult.requestsLimit
-          
-          if (apiKey) {
-            sendLog('success', `API Key 创建成功: ${apiKey.slice(0, 12)}****`)
-          } else {
-            sendLog('warning', 'API Key 已创建但未能获取完整值')
-          }
+        const success = await registerAccount({ email, password }, browserOptions)
+        if (!success) {
+          sendLog('error', `账户 ${email} 注册失败`)
         } else {
-          sendLog('warning', '获取 API Key 失败，账户仍然注册成功')
-        }
+          sendLog('info', '等待验证码邮件...')
+          const verificationCode = await getVerificationCode(emailService, email, config, settings)
 
-        const account = database.addAccount({
-          email,
-          password,
-          emailType: config.emailType,
-          status: 'active',
-          apiKey,
-          apiKeyName,
-          requestsLimit
-        })
-        
-        // 发送完成事件，包含 API Key 信息
-        mainWindow?.webContents.send('register:complete', {
-          ...account,
-          apiKey,
-          apiKeyName,
-          requestsLimit
-        })
-        sendLog('success', `账户 ${email} 注册成功！`)
-      } else {
-        sendLog('error', `账户 ${email} 验证失败`)
+          if (!verificationCode) {
+            sendLog('error', '获取验证码超时')
+          } else {
+            sendLog('success', `验证码: ${verificationCode}`)
+
+            const verified = await inputVerificationCode(verificationCode, browserOptions)
+            if (verified) {
+              sendLog('info', '开始获取 Context7 API Key...')
+              const apiKeyResult = await createContext7ApiKey(browserOptions)
+
+              let apiKey: string | undefined
+              let apiKeyName: string | undefined
+              let requestsLimit: number | undefined
+
+              if (apiKeyResult.success) {
+                apiKey = apiKeyResult.apiKey
+                apiKeyName = apiKeyResult.keyName
+                requestsLimit = apiKeyResult.requestsLimit
+
+                if (apiKey) {
+                  sendLog('success', `API Key 创建成功: ${apiKey.slice(0, 12)}****`)
+                } else {
+                  sendLog('warning', 'API Key 已创建但未能获取完整值')
+                }
+              } else {
+                sendLog('warning', '获取 API Key 失败，账户仍然注册成功')
+              }
+
+              const account = database.addAccount({
+                email,
+                password,
+                emailType: config.emailType,
+                status: 'active',
+                apiKey,
+                apiKeyName,
+                requestsLimit
+              })
+
+              mainWindow?.webContents.send('register:complete', {
+                ...account,
+                apiKey,
+                apiKeyName,
+                requestsLimit
+              })
+              sendLog('success', `账户 ${email} 注册成功！`)
+            } else {
+              sendLog('error', `账户 ${email} 验证失败`)
+            }
+          }
+        }
+      } finally {
+        sendLog('info', '正在关闭浏览器...')
+        await closeBrowser()
       }
 
       if (i < config.count - 1 && isRegistrationRunning()) {
         const interval = randomInt(config.intervalMin, config.intervalMax)
-        sendLog('info', `等待 ${interval} 秒后继续...`)
+        sendLog('info', `等待 ${interval} 秒后继续下一个账户...`)
         await delay(interval * 1000)
       }
     }
@@ -163,8 +167,9 @@ async function handleRegistration(config: RegistrationConfig): Promise<void> {
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : '未知错误'
     mainWindow?.webContents.send('register:error', message)
-  } finally {
     await closeBrowser()
+  } finally {
+    stopRegistration()
   }
 }
 
@@ -308,7 +313,6 @@ export async function registerIpcHandlers(window: BrowserWindow): Promise<void> 
     await closeBrowser()
   })
 
-  // 打开外部链接
   ipcMain.handle('shell:openExternal', async (_, url: string) => {
     try {
       await shell.openExternal(url)
@@ -318,9 +322,8 @@ export async function registerIpcHandlers(window: BrowserWindow): Promise<void> 
     }
   })
 
-  // 检查更新
   ipcMain.handle('app:checkForUpdates', async () => {
-    const currentVersion = '1.1.0'
+    const currentVersion = '1.4.0'
     const owner = 'mengqi1436'
     const repo = 'Ref7-Auto'
     
@@ -356,7 +359,6 @@ export async function registerIpcHandlers(window: BrowserWindow): Promise<void> 
                 releaseUrl: release.html_url
               })
             } else if (res.statusCode === 404) {
-              // 仓库没有发布任何 Release
               resolve({
                 hasUpdate: false,
                 currentVersion,
@@ -401,7 +403,6 @@ export async function registerIpcHandlers(window: BrowserWindow): Promise<void> 
   })
 }
 
-// 比较版本号
 function compareVersions(v1: string, v2: string): number {
   const parts1 = v1.split('.').map(Number)
   const parts2 = v2.split('.').map(Number)
