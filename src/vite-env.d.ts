@@ -6,6 +6,8 @@ import type {
   AppSettings,
   LogEntry,
   RegistrationConfig,
+  RefRegistrationConfig,
+  RefRegistrationResult,
   TempMailPlusConfig,
   ImapMailConfig
 } from './types'
@@ -16,6 +18,8 @@ export type {
   AppSettings,
   LogEntry,
   RegistrationConfig,
+  RefRegistrationConfig,
+  RefRegistrationResult,
   TempMailPlusConfig,
   ImapMailConfig
 }
@@ -39,6 +43,7 @@ interface ElectronAPI {
 
   startRegistration: (config: RegistrationConfig) => Promise<void>
   stopRegistration: () => Promise<void>
+  startRefRegistration: (config: RefRegistrationConfig) => Promise<RefRegistrationResult>
 
   testTempMailPlus: (config: TempMailPlusConfig) => Promise<boolean>
   testImapMail: (config: ImapMailConfig) => Promise<boolean>
