@@ -29,10 +29,16 @@ function App() {
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [defaultEmailType, setDefaultEmailType] = useState<EmailType>('tempmail_plus')
   const [notifications, setNotifications] = useState<NotificationItem[]>([])
+  const [refAccountToRegister, setRefAccountToRegister] = useState<Account | null>(null)
 
   const handleNavigate = useCallback((page: Page, emailType?: EmailType) => {
     if (emailType) setDefaultEmailType(emailType)
     setCurrentPage(page)
+  }, [])
+
+  const handleRefreshAccount = useCallback((account: Account) => {
+    setRefAccountToRegister(account)
+    setCurrentPage('register')
   }, [])
 
   const addNotification = useCallback((type: NotificationType, message: string) => {
@@ -176,9 +182,9 @@ function App() {
         case 'dashboard':
           return <Dashboard accounts={accounts} logs={logs} isRegistering={isRegistering} onNavigate={handleNavigate} />
         case 'accounts':
-          return <AccountList accounts={accounts} setAccounts={setAccounts} />
+          return <AccountList accounts={accounts} setAccounts={setAccounts} onRefreshAccount={handleRefreshAccount} />
         case 'register':
-          return <RegisterPanel settings={settings} isRegistering={isRegistering} setIsRegistering={setIsRegistering} logs={logs} setLogs={setLogs} defaultEmailType={defaultEmailType} />
+          return <RegisterPanel settings={settings} isRegistering={isRegistering} setIsRegistering={setIsRegistering} logs={logs} setLogs={setLogs} defaultEmailType={defaultEmailType} refAccountToRegister={refAccountToRegister} setRefAccountToRegister={setRefAccountToRegister} setAccounts={setAccounts} />
         case 'settings':
           return <Settings settings={settings} setSettings={setSettings} theme={theme} setTheme={setTheme} onNotify={addNotification} />
         case 'about':

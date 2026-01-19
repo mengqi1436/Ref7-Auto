@@ -11,6 +11,14 @@ import {
   stopRegistration,
   isRegistrationRunning
 } from '../services/browser'
+import {
+  initRefBrowser,
+  registerRefAccount,
+  sendRefVerificationEmail,
+  clickRefVerificationLink,
+  getRefApiKey,
+  closeRefBrowser
+} from '../services/ref-browser'
 import { TempMailPlusService } from '../services/email/tempmailplus'
 import { ImapMailService } from '../services/email/imap'
 import type { AccountStatus, EmailType } from '../services/database'
@@ -24,6 +32,18 @@ interface RegistrationConfig {
   intervalMin: number
   intervalMax: number
   showBrowser: boolean
+}
+
+interface RefRegistrationConfig {
+  email: string
+  password: string
+  showBrowser: boolean
+}
+
+interface RefRegistrationResult {
+  success: boolean
+  refApiKey?: string
+  error?: string
 }
 
 let mainWindow: BrowserWindow | null = null
@@ -226,6 +246,70 @@ async function getVerificationCode(
   return null
 }
 
+async function handleRefRegistration(config: RefRegistrationConfig): Promise<RefRegistrationResult> {
+  const settings = database.getSettings()
+  const opts = { headless: !config.showBrowser, onLog: sendLog }
+
+  try {
+    sendLog('info', `开始为 ${config.email} 注册 Ref API...`)
+    await initRefBrowser(opts)
+
+    if (!await registerRefAccount({ email: config.email, password: config.password }, opts)) {
+      await closeRefBrowser()
+      return { success: false, error: 'Ref 注册失败' }
+    }
+
+    await sendRefVerificationEmail(opts)
+    await delay(5000)
+
+    const verificationLink = await getRefVerificationLink(settings, config.email)
+    if (!verificationLink) {
+      await closeRefBrowser()
+      return { success: false, error: '获取验证链接超时' }
+    }
+
+    await clickRefVerificationLink(verificationLink, opts)
+
+    const result = await getRefApiKey(opts)
+    await closeRefBrowser()
+
+    if (result.success && result.apiKey) {
+      sendLog('success', `Ref API Key: ${result.apiKey.slice(0, 15)}****`)
+      return { success: true, refApiKey: result.apiKey }
+    }
+
+    return { success: false, error: result.error || '获取 API Key 失败' }
+  } catch (error: unknown) {
+    await closeRefBrowser()
+    const message = error instanceof Error ? error.message : '未知错误'
+    sendLog('error', `Ref 注册出错: ${message}`)
+    return { success: false, error: message }
+  }
+}
+
+async function getRefVerificationLink(
+  settings: ReturnType<typeof database.getSettings>,
+  email: string
+): Promise<string | null> {
+  sendLog('info', '从邮箱获取验证链接...')
+  const imapService = new ImapMailService(settings.imapMail)
+
+  for (let attempt = 1; attempt <= 10; attempt++) {
+    sendLog('info', `第 ${attempt}/10 次尝试获取验证链接...`)
+    try {
+      const link = await imapService.getRefVerificationLink(email, 10000)
+      if (link) {
+        sendLog('success', '获取到验证链接')
+        return link
+      }
+    } catch {}
+    if (attempt < 10) await delay(5000)
+  }
+
+  sendLog('error', '获取验证链接超时')
+  return null
+}
+
 export async function registerIpcHandlers(window: BrowserWindow): Promise<void> {
   mainWindow = window
   await database.initDatabase()
@@ -306,6 +390,8 @@ export async function registerIpcHandlers(window: BrowserWindow): Promise<void> 
   })
 
   ipcMain.handle('register:start', (_, config: RegistrationConfig) => handleRegistration(config))
+
+  ipcMain.handle('register:startRef', (_, config: RefRegistrationConfig) => handleRefRegistration(config))
 
   ipcMain.handle('register:stop', async () => {
     stopRegistration()

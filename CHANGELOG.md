@@ -2,6 +2,27 @@
 
 本项目所有重要更改都将记录在此文件中。
 
+## [1.5.0] - 2026-01-19
+
+### 新增
+- ✨ 新增 Ref.tools API 自动注册功能，支持一键获取 Ref API Key
+- 🔑 账户列表新增 Ref API Key 显示列，支持一键复制
+- 🔄 新增「注册 Ref API」按钮，可为已有账户单独注册 Ref API
+- 🖥️ Ref 注册支持调试模式，可选择显示/隐藏浏览器窗口
+- 📧 IMAP 服务新增 Ref 验证链接自动提取功能
+
+### 优化
+- 🎨 注册面板支持双模式切换（普通注册 / Ref 注册）
+- 📊 账户列表新增操作按钮列，优化用户体验
+- 🛠️ 重构 IPC 处理逻辑，新增 Ref 相关接口
+- 💾 数据库新增 refApiKey 字段支持
+
+### 技术改进
+- 新增 `ref-browser.ts` 服务模块，封装 Ref.tools 自动化逻辑
+- 浏览器自动化增强反检测能力（Turnstile 验证绕过）
+- TypeScript 类型定义完善（RefRegistrationConfig、RefRegistrationResult）
+- IMAP 服务增加多种验证链接匹配模式
+
 ## [1.4.0] - 2026-01-18
 
 ### 新增

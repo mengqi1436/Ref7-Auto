@@ -271,4 +271,151 @@ export class ImapMailService {
 
     return null
   }
+
+  async getRefVerificationLink(targetEmail: string, timeout = 10000): Promise<string | null> {
+    try {
+      return await Promise.race([
+        this.checkRefVerificationMail(targetEmail),
+        new Promise<null>(resolve => setTimeout(() => resolve(null), timeout))
+      ])
+    } catch {
+      return null
+    }
+  }
+
+  private async checkRefVerificationMail(targetEmail: string): Promise<string | null> {
+    return new Promise((resolve, reject) => {
+      const timeoutId = setTimeout(() => resolve(null), 8000)
+      const imap = this.createConnection()
+
+      imap.once('ready', () => {
+        imap.openBox(this.config.dir || 'INBOX', false, (err) => {
+          if (err) {
+            clearTimeout(timeoutId)
+            imap.end()
+            return reject(err)
+          }
+
+          const since = new Date(Date.now() - 10 * 60 * 1000) // 10 分钟内的邮件
+          // 搜索来自 Ref 的邮件
+          const searchCriteria: ImapSearchCriteria = [['SINCE', since]]
+
+          imap.search(searchCriteria, (err, results) => {
+            if (err || !results?.length) {
+              clearTimeout(timeoutId)
+              imap.end()
+              return resolve(null)
+            }
+
+            this.processRefVerificationMail(imap, results, targetEmail, timeoutId, resolve)
+          })
+        })
+      })
+
+      imap.once('error', (err: Error) => {
+        clearTimeout(timeoutId)
+        reject(err)
+      })
+
+      imap.connect()
+    })
+  }
+
+  private processRefVerificationMail(
+    imap: Imap,
+    results: number[],
+    targetEmail: string,
+    timeoutId: NodeJS.Timeout,
+    resolve: (value: string | null) => void
+  ) {
+    // 从最新的邮件开始检查
+    const sortedResults = [...results].reverse()
+
+    const checkNext = (index: number) => {
+      if (index >= sortedResults.length) {
+        clearTimeout(timeoutId)
+        imap.end()
+        return resolve(null)
+      }
+
+      const msgId = sortedResults[index]
+      const fetch = imap.fetch([msgId], { bodies: '' })
+
+      fetch.on('message', (msg) => {
+        msg.on('body', (stream: Readable) => {
+          simpleParser(stream, (err, parsed) => {
+            if (err) {
+              checkNext(index + 1)
+              return
+            }
+
+            // 检查是否是 Ref 的邮件
+            const fromAddress = parsed.from?.value?.[0]?.address?.toLowerCase() || ''
+            const fromText = parsed.from?.text?.toLowerCase() || ''
+            const subject = parsed.subject?.toLowerCase() || ''
+            const isRefMail = fromAddress.includes('ref') ||
+                              fromText.includes('ref') ||
+                              subject.includes('verify') ||
+                              subject.includes('email') ||
+                              subject.includes('confirm')
+
+            if (isRefMail || true) { // 检查所有邮件，寻找验证链接
+              const content = this.extractContent(parsed)
+              const link = this.extractRefVerificationLink(content)
+
+              if (link) {
+                clearTimeout(timeoutId)
+                imap.addFlags([msgId], ['\\Seen'], () => {
+                  imap.end()
+                  resolve(link)
+                })
+                return
+              }
+            }
+
+            // 继续检查下一封邮件
+            checkNext(index + 1)
+          })
+        })
+      })
+
+      fetch.once('error', () => {
+        checkNext(index + 1)
+      })
+    }
+
+    checkNext(0)
+  }
+
+  private extractRefVerificationLink(text: string): string | null {
+    // 查找 Ref 验证链接的模式
+    const patterns = [
+      /https?:\/\/[^\s"'<>]*ref\.tools[^\s"'<>]*verify[^\s"'<>]*/gi,
+      /https?:\/\/[^\s"'<>]*ref\.tools[^\s"'<>]*confirm[^\s"'<>]*/gi,
+      /https?:\/\/[^\s"'<>]*ref\.tools[^\s"'<>]*token=[^\s"'<>]*/gi,
+      /href="(https?:\/\/[^"]*ref\.tools[^"]*verify[^"]*)"/gi,
+      /href="(https?:\/\/[^"]*ref\.tools[^"]*confirm[^"]*)"/gi,
+      /href="(https?:\/\/[^"]*ref\.tools[^"]*token[^"]*)"/gi,
+      // 通用验证链接模式
+      /https?:\/\/[^\s"'<>]*verify[^\s"'<>]*token[^\s"'<>]*/gi,
+      /https?:\/\/[^\s"'<>]*confirm[^\s"'<>]*email[^\s"'<>]*/gi,
+    ]
+
+    for (const pattern of patterns) {
+      const matches = text.match(pattern)
+      if (matches && matches.length > 0) {
+        // 清理链接
+        let link = matches[0]
+        // 如果是 href="..." 格式，提取链接
+        if (link.startsWith('href="')) {
+          link = link.replace(/^href="/, '').replace(/"$/, '')
+        }
+        // 移除结尾的引号或尖括号
+        link = link.replace(/["'<>]+$/, '')
+        return link
+      }
+    }
+
+    return null
+  }
 }

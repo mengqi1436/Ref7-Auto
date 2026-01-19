@@ -29,13 +29,17 @@ win:
     - target: zip
       arch:
         - x64
-  icon: assets/icon.png
+  icon: assets/favicon.ico
   artifactName: ${productName}-${version}-win-${arch}.${ext}
   publisherName: REF7
 
 mac:
   target:
     - target: dmg
+      arch:
+        - x64
+        - arm64
+    - target: zip
       arch:
         - x64
         - arm64
@@ -85,6 +89,9 @@ nsis:
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: REF7 Auto Register
+  installerIcon: assets/favicon.ico
+  uninstallerIcon: assets/favicon.ico
+  installerHeaderIcon: assets/favicon.ico
   deleteAppDataOnUninstall: false
   differentialPackage: false
 

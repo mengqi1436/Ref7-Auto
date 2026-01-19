@@ -8,6 +8,7 @@ export interface Account {
   apiKey?: string
   apiKeyName?: string
   requestsLimit?: number
+  refApiKey?: string
 }
 
 export type AccountStatus = 'active' | 'pending' | 'invalid'
@@ -21,6 +22,18 @@ export interface RegistrationConfig {
   intervalMin: number
   intervalMax: number
   showBrowser: boolean
+}
+
+export interface RefRegistrationConfig {
+  email: string
+  password: string
+  showBrowser: boolean
+}
+
+export interface RefRegistrationResult {
+  success: boolean
+  refApiKey?: string
+  error?: string
 }
 
 export interface TempMailPlusConfig {

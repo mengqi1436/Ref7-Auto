@@ -26,6 +26,18 @@ interface RegistrationConfig {
   showBrowser: boolean
 }
 
+interface RefRegistrationConfig {
+  email: string
+  password: string
+  showBrowser: boolean
+}
+
+interface RefRegistrationResult {
+  success: boolean
+  refApiKey?: string
+  error?: string
+}
+
 interface TempMailPlusConfig {
   username: string
   epin: string
@@ -87,6 +99,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   startRegistration: (config: RegistrationConfig): Promise<void> => 
     ipcRenderer.invoke('register:start', config),
   stopRegistration: (): Promise<void> => ipcRenderer.invoke('register:stop'),
+  startRefRegistration: (config: RefRegistrationConfig): Promise<RefRegistrationResult> =>
+    ipcRenderer.invoke('register:startRef', config),
 
   testTempMailPlus: (config: TempMailPlusConfig): Promise<boolean> => 
     ipcRenderer.invoke('email:testTempMailPlus', config),

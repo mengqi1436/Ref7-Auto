@@ -18,8 +18,7 @@
   <a href="#功能特性">功能特性</a> •
   <a href="#技术栈">技术栈</a> •
   <a href="#快速开始">快速开始</a> •
-  <a href="#使用指南">使用指南</a> •
-  <a href="#配置说明">配置说明</a>
+  <a href="#使用指南">使用指南</a>
 </p>
 
 ---
@@ -89,17 +88,25 @@ REF7 Auto Register 是一款基于 Electron 的桌面应用程序，专为 [Cont
 
 ## 应用截图
 
-### 控制面板
-![控制面板](docs/screenshots/dashboard.png)
-*控制面板展示账户统计概览、实时运行日志和快捷操作入口*
-
-### 账户列表
-![账户列表](docs/screenshots/accounts.png)
-*账户列表支持查看、搜索、导出和批量管理已注册的账户*
-
-### 系统设置
-![系统设置](docs/screenshots/settings.png)
-*系统设置页面配置邮箱服务、注册参数和外观主题*
+<table>
+  <tr>
+    <td align="center">
+      <img src="docs/screenshots/dashboard.png" alt="控制面板" width="400"><br>
+      <em>控制面板 - 账户统计概览与实时日志</em>
+    </td>
+    <td align="center">
+      <img src="docs/screenshots/accounts.png" alt="账户列表" width="400"><br>
+      <em>账户列表 - 搜索、导出和批量管理</em>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="docs/screenshots/settings.png" alt="系统设置" width="400"><br>
+      <em>系统设置 - 邮箱服务与外观主题配置</em>
+    </td>
+    <td align="center"></td>
+  </tr>
+</table>
 
 ## 技术栈
 
@@ -139,13 +146,6 @@ cd ref7-auto-register
 npm install
 ```
 
-### 开发模式
-
-```bash
-# 启动开发服务器
-npm run electron:dev
-```
-
 ### 构建应用
 
 ```bash
@@ -160,24 +160,51 @@ npm run electron:build
 
 ## 使用指南
 
-### 1. 配置邮箱服务
+### 1. 配置 Cloudflare 域名邮箱
 
-在开始注册之前，需要先配置邮箱服务。进入 **系统设置** 页面：
+> ⚠️ **重要前提**：必须使用 Cloudflare 域名邮箱！请先完成以下步骤。
 
-#### TempMail+ 配置
-1. 访问 [tempmail.plus](https://tempmail.plus) 创建账户
-2. 获取用户名和 EPIN 码
+#### 1.1 将域名托管到 Cloudflare
+
+1. 登录 [Cloudflare 控制面板](https://dash.cloudflare.com)
+2. 点击「添加站点」，输入你的域名
+3. 按照提示修改域名的 DNS 服务器为 Cloudflare 提供的地址
+4. 等待 DNS 生效（通常需要几分钟到几小时）
+
+#### 1.2 配置 Cloudflare 邮件路由
+
+1. 在 Cloudflare 控制面板，选择你的域名
+2. 点击左侧菜单的「电子邮件」→「电子邮件路由」
+3. 启用电子邮件路由功能
+4. 点击「路由规则」→「创建地址」或「Catch-all 地址」
+5. 选择「发送到电子邮件」
+6. 填写目标邮箱地址（用于接收验证码的邮箱，如 QQ 邮箱或 tempmail.plus 邮箱）
+7. 验证目标邮箱后保存规则
+
+> 💡 **提示**：建议使用 Catch-all 规则，这样任意前缀的邮箱都会转发到目标邮箱。
+
+### 2. 配置邮箱服务
+
+完成 Cloudflare 邮件路由后，进入 **系统设置** 页面配置接收方式：
+
+#### 方式一：TempMail+（推荐）
+
+1. 访问 [tempmail.plus](https://tempmail.plus) 创建临时邮箱
+2. 获取邮箱用户名和 EPIN 码
 3. 在设置中填入相应信息
-4. 点击"测试连接"验证配置
-
-#### IMAP 邮箱配置
-1. 填写邮箱账号（如 QQ 邮箱）
-2. 获取并填入授权码（非登录密码）
-3. 配置生成邮箱的域名（需要域名邮箱转发支持）
-4. 可选配置 IMAP 服务器、端口等高级选项
+4. 将 Cloudflare 邮件路由的目标邮箱设置为 `用户名@mailto.plus`
 5. 点击"测试连接"验证配置
 
-### 2. 开始注册
+#### 方式二：IMAP 邮箱
+
+1. 填写你的邮箱账号（如 QQ 邮箱、Gmail 等）
+2. 获取并填入邮箱授权码（非登录密码）
+3. 配置 Cloudflare 域名（用于生成注册邮箱）
+4. 可选配置 IMAP 服务器地址、端口等
+5. 将 Cloudflare 邮件路由的目标邮箱设置为此邮箱地址
+6. 点击"测试连接"验证配置
+
+### 3. 开始注册
 
 进入 **开始注册** 页面：
 
@@ -187,7 +214,7 @@ npm run electron:build
 4. 点击"启动任务"开始自动注册
 5. 在右侧面板查看实时日志
 
-### 3. 管理账户
+### 4. 管理账户
 
 进入 **账户列表** 页面：
 
@@ -198,105 +225,13 @@ npm run electron:build
 - 导出账户数据为 CSV 格式
 - 删除不需要的账户
 
-### 4. 使用 API Key
+### 5. 使用 API Key
 
 注册成功后，每个账户都会自动获取 Context7 API Key：
 
 1. 在账户列表中找到目标账户
 2. 点击 API Key 旁的复制按钮
 3. 将 API Key 用于你的 Context7 API 调用
-
-## 配置说明
-
-### 注册参数
-
-| 参数 | 说明 | 默认值 |
-|------|------|--------|
-| 密码长度 | 生成密码的字符数 | 12 |
-| 注册间隔 | 批量注册时每个账户之间的等待时间 | 3-8 秒 |
-| 超时时间 | 等待验证码的最大时间 | 60 秒 |
-| 调试模式 | 是否显示浏览器窗口（关闭时使用后台隐藏模式） | 关闭 |
-
-### 账户数据字段
-
-| 字段 | 说明 |
-|------|------|
-| email | 注册邮箱地址 |
-| password | 账户密码 |
-| emailType | 邮箱类型 (tempmail_plus / imap) |
-| status | 账户状态 (active / pending / invalid) |
-| apiKey | Context7 API Key |
-| apiKeyName | API Key 名称 |
-| requestsLimit | API 请求配额限制 |
-
-### 数据存储
-
-应用数据存储在用户数据目录：
-
-- Windows: `%APPDATA%/ref7-auto-register/data/ref7.db`
-- macOS: `~/Library/Application Support/ref7-auto-register/data/ref7.db`
-- Linux: `~/.config/ref7-auto-register/data/ref7.db`
-
-## 项目结构
-
-```
-ref7-auto-register/
-├── assets/                  # 静态资源
-│   └── icon.png            # 应用图标
-├── electron/               # Electron 主进程
-│   ├── main.ts            # 主进程入口
-│   ├── preload.ts         # 预加载脚本
-│   ├── ipc/
-│   │   └── handlers.ts    # IPC 通信处理
-│   └── services/
-│       ├── browser.ts     # 浏览器自动化服务
-│       ├── database.ts    # 数据库服务
-│       └── email/
-│           ├── imap.ts    # IMAP 邮件服务
-│           └── tempmailplus.ts  # TempMail+ 服务
-├── src/                    # React 前端
-│   ├── App.tsx            # 根组件
-│   ├── main.tsx           # 入口文件
-│   ├── components/        # UI 组件
-│   │   ├── Dashboard.tsx  # 控制面板
-│   │   ├── AccountList.tsx # 账户列表
-│   │   ├── RegisterPanel.tsx # 注册面板
-│   │   ├── Settings.tsx   # 系统设置
-│   │   └── Notification.tsx # 通知组件
-│   ├── styles/
-│   │   └── globals.css    # 全局样式
-│   └── types/
-│       └── index.ts       # TypeScript 类型定义
-├── index.html             # HTML 入口
-├── vite.config.ts         # Vite 配置
-├── tailwind.config.js     # Tailwind 配置
-├── electron-builder.yml   # 打包配置
-└── package.json           # 项目配置
-```
-
-## 开发说明
-
-### 脚本命令
-
-```bash
-# 启动 Vite 开发服务器（仅前端）
-npm run dev
-
-# 启动 Electron 开发模式
-npm run electron:dev
-
-# 构建前端
-npm run build
-
-# 构建 Windows 安装包
-npm run electron:build:win
-```
-
-### 调试技巧
-
-1. **开启调试模式**：在设置中开启"调试模式"可以看到浏览器自动化的操作过程
-2. **查看日志**：注册过程的详细日志会实时显示在运行日志面板
-3. **开发者工具**：在开发模式下可以使用 Chrome DevTools 调试
 
 ## 注意事项
 

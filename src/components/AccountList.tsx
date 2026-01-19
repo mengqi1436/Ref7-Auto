@@ -2,13 +2,14 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { 
   Search, Download, Upload, Trash2, Eye, EyeOff,
-  ChevronLeft, ChevronRight, Copy, Check, Key, X
+  ChevronLeft, ChevronRight, Copy, Check, Key, X, RefreshCw
 } from 'lucide-react'
 import type { Account } from '../types'
 
 interface AccountListProps {
   accounts: Account[]
   setAccounts: React.Dispatch<React.SetStateAction<Account[]>>
+  onRefreshAccount?: (account: Account) => void
 }
 
 function ConfirmModal({ 
@@ -83,11 +84,11 @@ function ConfirmModal({
   )
 }
 
-export default function AccountList({ accounts, setAccounts }: AccountListProps) {
+export default function AccountList({ accounts, setAccounts, onRefreshAccount }: AccountListProps) {
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedIds, setSelectedIds] = useState<number[]>([])
   const [showPasswords, setShowPasswords] = useState<Record<number, boolean>>({})
-  const [copiedField, setCopiedField] = useState<{ id: number; field: 'password' | 'apiKey' } | null>(null)
+  const [copiedField, setCopiedField] = useState<{ id: number; field: 'password' | 'apiKey' | 'refApiKey' } | null>(null)
   const [currentPage, setCurrentPage] = useState(1)
   const [deleteModal, setDeleteModal] = useState<{ isOpen: boolean; ids: number[]; isSingle?: boolean }>({
     isOpen: false,
@@ -157,8 +158,8 @@ export default function AccountList({ accounts, setAccounts }: AccountListProps)
     setDeleteModal({ isOpen: true, ids: [id], isSingle: true })
   }, [])
 
-  const handleCopy = useCallback((account: Account, field: 'password' | 'apiKey') => {
-    const value = field === 'password' ? account.password : account.apiKey
+  const handleCopy = useCallback((account: Account, field: 'password' | 'apiKey' | 'refApiKey') => {
+    const value = field === 'password' ? account.password : field === 'apiKey' ? account.apiKey : account.refApiKey
     if (!value) return
     navigator.clipboard.writeText(value)
     setCopiedField({ id: account.id, field })
@@ -311,7 +312,8 @@ export default function AccountList({ accounts, setAccounts }: AccountListProps)
                 </th>
                 <th className="px-4 py-4 text-center">邮箱账户</th>
                 <th className="px-4 py-4 text-center">密码</th>
-                <th className="px-4 py-4 text-center">API Key</th>
+                <th className="px-4 py-4 text-center">context7 API</th>
+                <th className="px-4 py-4 text-center">Ref API</th>
                 <th className="px-4 py-4 text-center whitespace-nowrap">注册时间</th>
                 <th className="px-4 py-4 text-center whitespace-nowrap">操作</th>
               </tr>
@@ -319,7 +321,7 @@ export default function AccountList({ accounts, setAccounts }: AccountListProps)
             <tbody className="divide-y divide-border/50">
               {paginatedAccounts.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-16 text-center text-muted-foreground text-lg">
+                  <td colSpan={7} className="px-6 py-16 text-center text-muted-foreground text-lg">
                     {searchTerm ? '未找到匹配的账户' : '暂无账户数据'}
                   </td>
                 </tr>
@@ -396,19 +398,55 @@ export default function AccountList({ accounts, setAccounts }: AccountListProps)
                         <span className="text-muted-foreground/50 text-sm">-</span>
                       )}
                     </td>
+                    <td className="px-4 py-4 text-center">
+                      {account.refApiKey ? (
+                        <div className="inline-flex items-center gap-1.5">
+                          <Key size={14} className="text-emerald-500 shrink-0" />
+                          <span className="font-mono text-sm text-muted-foreground">
+                            {account.refApiKey.slice(0, 3)}****{account.refApiKey.slice(-3)}
+                          </span>
+                          <motion.button
+                            onClick={() => handleCopy(account, 'refApiKey')}
+                            whileHover={{ scale: 1.1 }}
+                            whileTap={{ scale: 0.9 }}
+                            className="p-1 hover:bg-secondary rounded transition-colors cursor-pointer"
+                            title="复制 Ref API"
+                          >
+                            {copiedField?.id === account.id && copiedField.field === 'refApiKey' ? (
+                              <Check size={14} className="text-emerald-500" />
+                            ) : (
+                              <Copy size={14} className="text-muted-foreground" />
+                            )}
+                          </motion.button>
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground/50 text-sm">-</span>
+                      )}
+                    </td>
                     <td className="px-4 py-4 text-muted-foreground text-center whitespace-nowrap">
                       {new Date(account.createdAt).toLocaleDateString('zh-CN')}
                     </td>
                     <td className="px-4 py-4 text-center">
-                      <motion.button
-                        onClick={() => handleSingleDelete(account.id)}
-                        whileHover={{ scale: 1.1 }}
-                        whileTap={{ scale: 0.9 }}
-                        className="p-1.5 rounded text-destructive bg-destructive/10 hover:bg-destructive/20 transition-colors cursor-pointer"
-                        title="删除"
-                      >
-                        <Trash2 size={16} />
-                      </motion.button>
+                      <div className="inline-flex items-center gap-1.5">
+                        <motion.button
+                          onClick={() => onRefreshAccount?.(account)}
+                          whileHover={{ scale: 1.1 }}
+                          whileTap={{ scale: 0.9 }}
+                          className="p-1.5 rounded text-primary bg-primary/10 hover:bg-primary/20 transition-colors cursor-pointer"
+                          title="注册 Ref API"
+                        >
+                          <RefreshCw size={16} />
+                        </motion.button>
+                        <motion.button
+                          onClick={() => handleSingleDelete(account.id)}
+                          whileHover={{ scale: 1.1 }}
+                          whileTap={{ scale: 0.9 }}
+                          className="p-1.5 rounded text-destructive bg-destructive/10 hover:bg-destructive/20 transition-colors cursor-pointer"
+                          title="删除"
+                        >
+                          <Trash2 size={16} />
+                        </motion.button>
+                      </div>
                     </td>
                   </motion.tr>
                 ))
