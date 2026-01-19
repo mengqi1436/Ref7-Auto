@@ -17,6 +17,7 @@ export interface Account {
   apiKey?: string
   apiKeyName?: string
   requestsLimit?: number
+  refApiKey?: string
 }
 
 export interface TempMailPlusConfig {
@@ -174,7 +175,8 @@ export function addAccount(account: Omit<Account, 'id' | 'createdAt'>): Account 
     createdAt: new Date().toISOString(),
     apiKey: account.apiKey,
     apiKeyName: account.apiKeyName,
-    requestsLimit: account.requestsLimit
+    requestsLimit: account.requestsLimit,
+    refApiKey: account.refApiKey
   }
   
   data.nextId++
@@ -202,6 +204,15 @@ export function updateAccountStatus(id: number, status: AccountStatus): void {
   const account = data.accounts.find(a => a.id === id)
   if (account) {
     account.status = status
+    writeJsonFile(ACCOUNTS_FILE, data)
+  }
+}
+
+export function updateAccountRefApiKey(id: number, refApiKey: string): void {
+  const data = readJsonFile<AccountsData>(ACCOUNTS_FILE, getDefaultAccountsData())
+  const account = data.accounts.find(a => a.id === id)
+  if (account) {
+    account.refApiKey = refApiKey
     writeJsonFile(ACCOUNTS_FILE, data)
   }
 }
@@ -242,7 +253,8 @@ export function importAccounts(accountsToImport: Partial<Account>[]): ImportResu
       createdAt: account.createdAt || new Date().toISOString(),
       apiKey: account.apiKey,
       apiKeyName: account.apiKeyName,
-      requestsLimit: account.requestsLimit
+      requestsLimit: account.requestsLimit,
+      refApiKey: account.refApiKey
     })
     existingEmails.add(account.email.toLowerCase())
     result.imported++

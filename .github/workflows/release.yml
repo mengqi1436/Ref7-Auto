@@ -66,22 +66,8 @@ jobs:
         with:
           name: release-${{ matrix.platform }}
           path: |
-            release/*Setup*.exe
-            release/*portable*.exe
+            release/*.exe
             release/*.dmg
             release/*.AppImage
             release/*.deb
           if-no-files-found: ignore
-
-      - name: Publish to GitHub Releases
-        uses: softprops/action-gh-release@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
-        with:
-          draft: true
-          files: |
-            release/*Setup*.exe
-            release/*portable*.exe
-            release/*.dmg
-            release/*.AppImage
-            release/*.deb

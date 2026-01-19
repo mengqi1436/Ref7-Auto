@@ -15,6 +15,13 @@ interface RegisterPanelProps {
   setAccounts?: React.Dispatch<React.SetStateAction<Account[]>>
 }
 
+const LOG_STYLES: Record<LogEntry['type'], string> = {
+  error: 'bg-destructive/10 text-destructive border-l-2 border-destructive',
+  success: 'bg-emerald-500/10 text-emerald-500 border-l-2 border-emerald-500',
+  warning: 'bg-accent/10 text-accent border-l-2 border-accent',
+  info: 'text-foreground border-l-2 border-primary/30'
+}
+
 export default function RegisterPanel({ 
   settings, 
   isRegistering, 
@@ -33,34 +40,19 @@ export default function RegisterPanel({
   const isRunningRef = useRef(false)
 
   const isRefMode = !!refAccountToRegister
-
   const maxBatchCount = settings?.registration.maxBatchCount ?? 20
 
-  useEffect(() => {
-    setEmailType(defaultEmailType)
-  }, [defaultEmailType])
-
-  useEffect(() => {
-    if (settings?.registration.defaultBatchCount !== undefined) {
-      setBatchCount(settings.registration.defaultBatchCount)
-    }
+  useEffect(() => { setEmailType(defaultEmailType) }, [defaultEmailType])
+  useEffect(() => { 
+    if (settings?.registration.defaultBatchCount !== undefined) 
+      setBatchCount(settings.registration.defaultBatchCount) 
   }, [settings?.registration.defaultBatchCount])
-
-  useEffect(() => {
-    if (settings?.registration.showBrowser !== undefined) {
-      setShowBrowser(settings.registration.showBrowser)
-    }
+  useEffect(() => { 
+    if (settings?.registration.showBrowser !== undefined) 
+      setShowBrowser(settings.registration.showBrowser) 
   }, [settings?.registration.showBrowser])
-
-  useEffect(() => {
-    isRunningRef.current = isRegistering
-  }, [isRegistering])
-
-  useEffect(() => {
-    logsEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [logs])
-
-  const delay = useCallback((ms: number) => new Promise(resolve => setTimeout(resolve, ms)), [])
+  useEffect(() => { isRunningRef.current = isRegistering }, [isRegistering])
+  useEffect(() => { logsEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [logs])
 
   const addLog = useCallback((type: LogEntry['type'], message: string) => {
     setLogs(prev => [...prev, {
@@ -71,32 +63,13 @@ export default function RegisterPanel({
     }])
   }, [setLogs])
 
-  const simulateRegistration = useCallback(async () => {
-    for (let i = 0; i < batchCount; i++) {
-      if (!isRunningRef.current) break
-      await delay(1000)
-      addLog('info', `[模拟] 开始注册第 ${i + 1} 个账户...`)
-      if (!isRunningRef.current) break
-      await delay(2000)
-      addLog('success', `[模拟] 账户注册成功`)
-    }
-    addLog('info', '[模拟] 批量注册任务完成')
-  }, [batchCount, delay, addLog])
-
   const handleStart = useCallback(async () => {
-    if (!settings) {
-      addLog('error', '请先配置邮箱设置')
-      return
+    if (!settings) { addLog('error', '请先配置邮箱设置'); return }
+    if (emailType === 'tempmail_plus' && !settings.tempMailPlus.username) { 
+      addLog('error', '请先配置 TempMail.Plus'); return 
     }
-
-    if (emailType === 'tempmail_plus' && !settings.tempMailPlus.username) {
-      addLog('error', '请先配置 TempMail.Plus')
-      return
-    }
-
-    if (emailType === 'imap' && (!settings.imapMail.user || !settings.imapMail.domain)) {
-      addLog('error', '请先配置 IMAP 邮箱和域名')
-      return
+    if (emailType === 'imap' && (!settings.imapMail.user || !settings.imapMail.domain)) { 
+      addLog('error', '请先配置 IMAP 邮箱和域名'); return 
     }
 
     setIsRegistering(true)
@@ -114,27 +87,19 @@ export default function RegisterPanel({
       })
     } catch (error) {
       console.error('注册启动失败:', error)
-      await simulateRegistration()
     } finally {
       setIsRegistering(false)
       isRunningRef.current = false
     }
-  }, [settings, emailType, batchCount, showBrowser, setIsRegistering, addLog, simulateRegistration])
+  }, [settings, emailType, batchCount, showBrowser, setIsRegistering, addLog])
 
   const handleStop = useCallback(async () => {
     isRunningRef.current = false
     setIsRegistering(false)
-    try {
-      await window.electronAPI?.stopRegistration?.()
-    } catch (error) {
-      console.error('停止注册失败:', error)
-    }
+    try { await window.electronAPI?.stopRegistration?.() } 
+    catch (error) { console.error('停止注册失败:', error) }
     addLog('warning', '注册任务已停止')
   }, [setIsRegistering, addLog])
-
-  const handleCancelRefMode = useCallback(() => {
-    setRefAccountToRegister?.(null)
-  }, [setRefAccountToRegister])
 
   const handleStartRefRegistration = useCallback(async () => {
     if (!refAccountToRegister) return
@@ -145,27 +110,23 @@ export default function RegisterPanel({
 
     try {
       const result = await window.electronAPI?.startRefRegistration?.({
+        accountId: refAccountToRegister.id,
         email: refAccountToRegister.email,
         password: refAccountToRegister.password,
         showBrowser
       })
 
-      if (result?.success) {
-        addLog('success', `Ref API 注册成功！`)
-        if (result.refApiKey) {
-          addLog('success', `API Key: ${result.refApiKey.slice(0, 12)}****`)
-          setAccounts?.(prev => prev.map(acc => 
-            acc.id === refAccountToRegister.id 
-              ? { ...acc, refApiKey: result.refApiKey }
-              : acc
-          ))
-        }
+      if (result?.success && result.refApiKey) {
+        addLog('success', 'Ref API 注册成功！')
+        addLog('success', `API Key: ${result.refApiKey.slice(0, 12)}****`)
+        setAccounts?.(prev => prev.map(acc => 
+          acc.id === refAccountToRegister.id ? { ...acc, refApiKey: result.refApiKey } : acc
+        ))
         setRefAccountToRegister?.(null)
       } else {
         addLog('error', `Ref API 注册失败: ${result?.error || '未知错误'}`)
       }
     } catch (error) {
-      console.error('Ref 注册失败:', error)
       addLog('error', `Ref 注册失败: ${error instanceof Error ? error.message : '未知错误'}`)
     } finally {
       setIsRegistering(false)
@@ -173,12 +134,22 @@ export default function RegisterPanel({
     }
   }, [refAccountToRegister, showBrowser, setIsRegistering, addLog, setRefAccountToRegister, setAccounts])
 
-  const getLogBgClass = useCallback((type: LogEntry['type']) => {
-    if (type === 'error') return 'bg-destructive/10 text-destructive border-l-2 border-destructive'
-    if (type === 'success') return 'bg-emerald-500/10 text-emerald-500 border-l-2 border-emerald-500'
-    if (type === 'warning') return 'bg-accent/10 text-accent border-l-2 border-accent'
-    return 'text-foreground border-l-2 border-primary/30'
-  }, [])
+  const ToggleSwitch = ({ active, color }: { active: boolean; color: string }) => (
+    <motion.button
+      onClick={() => setShowBrowser(!showBrowser)}
+      disabled={isRegistering}
+      whileTap={{ scale: 0.95 }}
+      className={`w-14 h-7 rounded-full transition-colors relative cursor-pointer ${
+        active ? color : 'bg-secondary'
+      } disabled:opacity-50 disabled:cursor-not-allowed`}
+    >
+      <motion.span 
+        className="absolute top-1 left-1 w-5 h-5 rounded-full bg-white shadow-md"
+        animate={{ x: active ? 26 : 0 }}
+        transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+      />
+    </motion.button>
+  )
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[calc(100vh-10rem)]">
@@ -190,15 +161,10 @@ export default function RegisterPanel({
       >
         <div>
           <h2 className="text-3xl font-bold tracking-tight">
-            {isRefMode ? (
-              <>
-                <span className="text-accent">Ref</span> 注册
-              </>
-            ) : (
-              <>
-                <span className="text-primary">开始</span>注册
-              </>
-            )}
+            <span className={isRefMode ? 'text-accent' : 'text-primary'}>
+              {isRefMode ? 'Ref' : '开始'}
+            </span>
+            {isRefMode ? ' 注册' : '注册'}
           </h2>
           <p className="text-lg text-muted-foreground mt-1">
             {isRefMode ? '为已有账户注册 Ref API' : '配置并运行自动化注册任务'}
@@ -214,12 +180,11 @@ export default function RegisterPanel({
                   Ref API 注册
                 </h3>
                 <motion.button
-                  onClick={handleCancelRefMode}
+                  onClick={() => setRefAccountToRegister?.(null)}
                   disabled={isRegistering}
                   whileHover={{ scale: 1.1 }}
                   whileTap={{ scale: 0.9 }}
                   className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors cursor-pointer disabled:opacity-50"
-                  title="取消"
                 >
                   <X size={18} />
                 </motion.button>
@@ -230,7 +195,6 @@ export default function RegisterPanel({
                   <p className="text-sm text-muted-foreground mb-1">目标账户</p>
                   <p className="font-mono text-base font-medium">{refAccountToRegister?.email}</p>
                 </div>
-
                 <div className="text-sm text-muted-foreground space-y-2">
                   <p>将执行以下操作：</p>
                   <ol className="list-decimal list-inside space-y-1 ml-2">
@@ -250,20 +214,7 @@ export default function RegisterPanel({
                   </div>
                   <p className="text-sm text-muted-foreground">显示浏览器窗口</p>
                 </div>
-                <motion.button
-                  onClick={() => setShowBrowser(!showBrowser)}
-                  disabled={isRegistering}
-                  whileTap={{ scale: 0.95 }}
-                  className={`w-14 h-7 rounded-full transition-colors relative cursor-pointer ${
-                    showBrowser ? 'bg-accent' : 'bg-secondary'
-                  } disabled:opacity-50 disabled:cursor-not-allowed`}
-                >
-                  <motion.span 
-                    className="absolute top-1 left-1 w-5 h-5 rounded-full bg-white shadow-md"
-                    animate={{ x: showBrowser ? 26 : 0 }}
-                    transition={{ type: 'spring', stiffness: 500, damping: 30 }}
-                  />
-                </motion.button>
+                <ToggleSwitch active={showBrowser} color="bg-accent" />
               </div>
             </div>
           ) : (
@@ -276,36 +227,27 @@ export default function RegisterPanel({
               <div className="space-y-3">
                 <label className="text-base font-medium text-muted-foreground">邮箱服务</label>
                 <div className="grid grid-cols-2 gap-3">
-                  <motion.button
-                    onClick={() => setEmailType('tempmail_plus')}
-                    disabled={isRegistering}
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
-                    className={`flex flex-col items-center justify-center gap-2 p-5 rounded-xl border transition-all cursor-pointer ${
-                      emailType === 'tempmail_plus'
-                        ? 'bg-primary/10 border-primary text-primary'
-                        : 'bg-background border-border/50 hover:bg-secondary/50 hover:border-primary/50'
-                    } disabled:opacity-50 disabled:cursor-not-allowed`}
-                  >
-                    <Globe size={26} />
-                    <span className="text-base font-medium">TempMail+</span>
-                    <span className="text-xs text-muted-foreground">临时邮箱</span>
-                  </motion.button>
-                  <motion.button
-                    onClick={() => setEmailType('imap')}
-                    disabled={isRegistering}
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
-                    className={`flex flex-col items-center justify-center gap-2 p-5 rounded-xl border transition-all cursor-pointer ${
-                      emailType === 'imap'
-                        ? 'bg-accent/10 border-accent text-accent'
-                        : 'bg-background border-border/50 hover:bg-secondary/50 hover:border-accent/50'
-                    } disabled:opacity-50 disabled:cursor-not-allowed`}
-                  >
-                    <Mail size={26} />
-                    <span className="text-base font-medium">IMAP</span>
-                    <span className="text-xs text-muted-foreground">自有域名</span>
-                  </motion.button>
+                  {[
+                    { type: 'tempmail_plus' as const, icon: Globe, label: 'TempMail+', sub: '临时邮箱', color: 'primary' },
+                    { type: 'imap' as const, icon: Mail, label: 'IMAP', sub: '自有域名', color: 'accent' }
+                  ].map(({ type, icon: Icon, label, sub, color }) => (
+                    <motion.button
+                      key={type}
+                      onClick={() => setEmailType(type)}
+                      disabled={isRegistering}
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      className={`flex flex-col items-center justify-center gap-2 p-5 rounded-xl border transition-all cursor-pointer ${
+                        emailType === type
+                          ? `bg-${color}/10 border-${color} text-${color}`
+                          : `bg-background border-border/50 hover:bg-secondary/50 hover:border-${color}/50`
+                      } disabled:opacity-50 disabled:cursor-not-allowed`}
+                    >
+                      <Icon size={26} />
+                      <span className="text-base font-medium">{label}</span>
+                      <span className="text-xs text-muted-foreground">{sub}</span>
+                    </motion.button>
+                  ))}
                 </div>
               </div>
 
@@ -331,29 +273,16 @@ export default function RegisterPanel({
               </div>
 
               <div className="flex items-center justify-between pt-5 border-t border-border/50">
-              <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <Monitor size={18} className="text-muted-foreground" />
-                  <span className="text-base font-medium">调试模式</span>
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <Monitor size={18} className="text-muted-foreground" />
+                    <span className="text-base font-medium">调试模式</span>
+                  </div>
+                  <p className="text-sm text-muted-foreground">显示浏览器窗口</p>
                 </div>
-                <p className="text-sm text-muted-foreground">显示浏览器窗口</p>
+                <ToggleSwitch active={showBrowser} color="bg-primary" />
               </div>
-              <motion.button
-                onClick={() => setShowBrowser(!showBrowser)}
-                disabled={isRegistering}
-                whileTap={{ scale: 0.95 }}
-                className={`w-14 h-7 rounded-full transition-colors relative cursor-pointer ${
-                  showBrowser ? 'bg-primary' : 'bg-secondary'
-                } disabled:opacity-50 disabled:cursor-not-allowed`}
-              >
-                <motion.span 
-                  className="absolute top-1 left-1 w-5 h-5 rounded-full bg-white shadow-md"
-                  animate={{ x: showBrowser ? 26 : 0 }}
-                  transition={{ type: 'spring', stiffness: 500, damping: 30 }}
-                />
-              </motion.button>
             </div>
-          </div>
           )}
 
           {!isRegistering ? (
@@ -392,28 +321,17 @@ export default function RegisterPanel({
       >
         <div className="px-6 py-4 border-b border-border/50 bg-secondary/30 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <motion.div
-              animate={isRegistering ? { rotate: 360 } : {}}
-              transition={{ duration: 2, repeat: Infinity, ease: 'linear' }}
-            >
+            <motion.div animate={isRegistering ? { rotate: 360 } : {}} transition={{ duration: 2, repeat: Infinity, ease: 'linear' }}>
               <Activity className={isRegistering ? 'text-accent' : 'text-muted-foreground'} size={20} />
             </motion.div>
             <h3 className="font-semibold text-lg">运行日志</h3>
             {isRegistering && (
-              <motion.div
-                className="flex items-center gap-2 px-3 py-1 rounded-full bg-accent/10 text-accent text-sm"
-                initial={{ opacity: 0, scale: 0.8 }}
-                animate={{ opacity: 1, scale: 1 }}
-              >
-                <Zap size={14} />
-                运行中
+              <motion.div className="flex items-center gap-2 px-3 py-1 rounded-full bg-accent/10 text-accent text-sm" initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }}>
+                <Zap size={14} />运行中
               </motion.div>
             )}
           </div>
-          <button 
-            onClick={() => setLogs([])} 
-            className="text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer px-3 py-1 rounded-lg hover:bg-secondary"
-          >
+          <button onClick={() => setLogs([])} className="text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer px-3 py-1 rounded-lg hover:bg-secondary">
             清空日志
           </button>
         </div>
@@ -421,10 +339,7 @@ export default function RegisterPanel({
         <div className="flex-1 p-4 overflow-auto space-y-1 font-mono text-base">
           {logs.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-muted-foreground">
-              <motion.div
-                animate={{ rotate: 360 }}
-                transition={{ duration: 8, repeat: Infinity, ease: 'linear' }}
-              >
+              <motion.div animate={{ rotate: 360 }} transition={{ duration: 8, repeat: Infinity, ease: 'linear' }}>
                 <Zap className="mb-4 opacity-20" size={52} />
               </motion.div>
               <p className="text-lg">等待任务启动...</p>
@@ -437,7 +352,7 @@ export default function RegisterPanel({
                   initial={{ opacity: 0, x: -10 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: index * 0.02 }}
-                  className={`flex items-start gap-3 p-3 rounded-lg transition-colors ${getLogBgClass(log.type)}`}
+                  className={`flex items-start gap-3 p-3 rounded-lg transition-colors ${LOG_STYLES[log.type]}`}
                 >
                   <span className="text-sm opacity-60 mt-0.5">{log.timestamp}</span>
                   <span className="flex-1 break-all">{log.message}</span>

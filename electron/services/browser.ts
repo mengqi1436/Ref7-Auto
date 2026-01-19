@@ -40,13 +40,23 @@ interface PuppeteerElement {
   boundingBox(): Promise<{ x: number; y: number; width: number; height: number } | null>
 }
 
+export interface Context7ApiKeyResult {
+  success: boolean
+  apiKey?: string
+  keyName?: string
+  requestsUsed?: number
+  requestsLimit?: number
+}
+
 let browser: PuppeteerBrowser | null = null
 let page: PuppeteerPage | null = null
 let isRunning = false
 
 const REGISTER_URL = 'https://context7.com/sign-up'
+const DASHBOARD_URL = 'https://context7.com/dashboard'
+const TURNSTILE_TIMEOUT = 120000
 
-const ANTI_DETECTION_ARGS = [
+const BROWSER_ARGS = [
   '--disable-blink-features=AutomationControlled',
   '--disable-features=IsolateOrigins,site-per-process',
   '--no-first-run',
@@ -56,11 +66,25 @@ const ANTI_DETECTION_ARGS = [
   '--window-size=1920,1080'
 ]
 
-async function hideAndMoveChromeOffscreen(): Promise<void> {
+const SELECTORS = {
+  email: 'input[name="emailAddress"], input[name="identifier"], input[type="email"], input[name="email"], input[autocomplete="email"], input[autocomplete="username"]',
+  password: 'input[type="password"], input[name="password"], input[autocomplete="current-password"], input[autocomplete="new-password"]',
+  code: 'input[name="code"], input[type="text"][maxlength="6"], input[placeholder*="验证码"], input[placeholder*="code"], input[autocomplete="one-time-code"]'
+}
+
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+const humanDelay = (min: number, max: number) => delay(Math.floor(Math.random() * (max - min + 1)) + min)
+const getTypingDelay = () => Math.floor(Math.random() * 80) + 50
+const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : '未知错误'
+
+function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return Promise.race([promise, new Promise<T>(resolve => setTimeout(() => resolve(fallback), ms))])
+}
+
+async function hideChrome(): Promise<void> {
+  if (process.platform !== 'win32') return
   try {
-    // 将 Chrome 窗口移到屏幕外 (-3000, -3000) 并从任务栏隐藏
-    // GWL_EXSTYLE = -20, WS_EX_TOOLWINDOW = 0x80 (从任务栏隐藏)
-    const cmd = `powershell -ExecutionPolicy Bypass -Command "
+    await execAsync(`powershell -ExecutionPolicy Bypass -Command "
       Add-Type -Name Win -Namespace Native -MemberDefinition '
         [DllImport(\\\"user32.dll\\\")] public static extern bool MoveWindow(IntPtr hWnd, int X, int Y, int nWidth, int nHeight, bool bRepaint);
         [DllImport(\\\"user32.dll\\\")] public static extern int GetWindowLong(IntPtr hWnd, int nIndex);
@@ -72,31 +96,107 @@ async function hideAndMoveChromeOffscreen(): Promise<void> {
         $style = [Native.Win]::GetWindowLong($h, -20);
         [Native.Win]::SetWindowLong($h, -20, $style -bor 0x80);
       }
-    "`
+    "`)
+  } catch {}
+}
+
+async function killChromeProcesses(): Promise<void> {
+  try {
+    const cmd = process.platform === 'win32'
+      ? 'taskkill /F /IM chrome.exe /T 2>nul'
+      : 'pkill -9 chrome 2>/dev/null || true'
     await execAsync(cmd)
-  } catch {
-    // 忽略错误
+  } catch {}
+}
+
+async function simulateHumanBehavior(targetPage: PuppeteerPage): Promise<void> {
+  try {
+    const x = Math.floor(Math.random() * 800) + 100
+    const y = Math.floor(Math.random() * 600) + 100
+    await withTimeout(targetPage.mouse.move(x, y), 1000, undefined)
+    await humanDelay(50, 150)
+  } catch {}
+}
+
+async function humanClick(element: PuppeteerElement, targetPage: PuppeteerPage): Promise<void> {
+  try {
+    const box = await withTimeout(element.boundingBox(), 2000, null)
+    if (box) {
+      const x = box.x + box.width / 2 + (Math.random() * 10 - 5)
+      const y = box.y + box.height / 2 + (Math.random() * 10 - 5)
+      await withTimeout(targetPage.mouse.move(x, y), 1000, undefined)
+      await humanDelay(50, 150)
+    }
+  } catch {}
+  await element.click()
+}
+
+async function clickButtonByText(patterns: string[]): Promise<boolean> {
+  if (!page) return false
+  return page.evaluate((pats: string[]) => {
+    const buttons = Array.from(document.querySelectorAll('button'))
+    for (const btn of buttons) {
+      const text = (btn.textContent || '').toLowerCase()
+      if (pats.some(p => text.includes(p))) {
+        btn.click()
+        return true
+      }
+    }
+    const submitBtn = document.querySelector('button[type="submit"]') as HTMLButtonElement
+    if (submitBtn) { submitBtn.click(); return true }
+    return false
+  }, patterns)
+}
+
+async function waitForTurnstile(targetPage: PuppeteerPage, options: BrowserServiceOptions): Promise<void> {
+  const startTime = Date.now()
+  await humanDelay(2000, 4000)
+
+  while (Date.now() - startTime < TURNSTILE_TIMEOUT) {
+    await simulateHumanBehavior(targetPage)
+
+    const turnstileFrame = await targetPage.$('iframe[src*="challenges.cloudflare.com"], .cf-turnstile iframe')
+    if (!turnstileFrame) return
+
+    const isVerified = await targetPage.evaluate(() => {
+      const input = document.querySelector('input[name="cf-turnstile-response"]') as HTMLInputElement
+      if (input?.value) return true
+      return !!document.querySelector('.cf-turnstile-success, [data-turnstile-success]')
+    })
+
+    if (isVerified) {
+      options.onLog('success', 'Turnstile 验证完成')
+      return
+    }
+
+    const hasError = await targetPage.evaluate(() =>
+      !!document.querySelector('.cf-turnstile-error, [data-turnstile-error]')
+    )
+    if (hasError) options.onLog('warning', 'Turnstile 验证出现错误，等待重试...')
+
+    await humanDelay(800, 1500)
   }
+
+  throw new Error('Turnstile验证超时')
 }
 
 export async function initBrowser(options: BrowserServiceOptions): Promise<void> {
-  // 确保旧浏览器完全关闭
   if (browser) {
     options.onLog('info', '正在关闭旧浏览器实例...')
     await closeBrowser()
   }
 
-  const useHiddenMode = options.headless
-  const browserArgs = useHiddenMode
-    ? [...ANTI_DETECTION_ARGS, '--window-position=-3000,-3000']
-    : [...ANTI_DETECTION_ARGS, '--start-maximized']
+  const useHidden = options.headless
+  const args = useHidden
+    ? [...BROWSER_ARGS, '--window-position=-3000,-3000']
+    : [...BROWSER_ARGS, '--start-maximized']
 
-  options.onLog('info', `正在启动新浏览器 (${useHiddenMode ? '后台模式' : '可见模式'})...`)
+  options.onLog('info', `正在启动新浏览器 (${useHidden ? '后台模式' : '可见模式'})...`)
 
   try {
     const response = await connect({
       headless: false,
-      args: browserArgs,
+      args,
       customConfig: {},
       turnstile: true,
       fingerprint: true,
@@ -111,55 +211,25 @@ export async function initBrowser(options: BrowserServiceOptions): Promise<void>
     await page.setViewport({ width: 1920, height: 1080 })
     await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7' })
 
-    if (useHiddenMode) {
+    if (useHidden) {
       options.onLog('info', '正在隐藏浏览器窗口...')
       await delay(1500)
-      await hideAndMoveChromeOffscreen()
+      await hideChrome()
       await delay(500)
-      await hideAndMoveChromeOffscreen()
+      await hideChrome()
       options.onLog('success', '浏览器启动成功（已隐藏到后台）')
     } else {
       options.onLog('success', '浏览器启动成功（新指纹）')
     }
     isRunning = true
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : '未知错误'
-    options.onLog('error', `浏览器启动失败: ${message}`)
+    options.onLog('error', `浏览器启动失败: ${getErrorMessage(error)}`)
     throw error
   }
 }
 
-const EMAIL_SELECTORS = [
-  'input[name="emailAddress"]',
-  'input[name="identifier"]',
-  'input[type="email"]',
-  'input[name="email"]',
-  'input[autocomplete="email"]',
-  'input[autocomplete="username"]'
-].join(', ')
-
-const PASSWORD_SELECTORS = [
-  'input[type="password"]',
-  'input[name="password"]',
-  'input[autocomplete="current-password"]',
-  'input[autocomplete="new-password"]'
-].join(', ')
-
-const CODE_SELECTORS = [
-  'input[name="code"]',
-  'input[type="text"][maxlength="6"]',
-  'input[placeholder*="验证码"]',
-  'input[placeholder*="code"]',
-  'input[autocomplete="one-time-code"]'
-].join(', ')
-
-export async function registerAccount(
-  data: RegistrationData,
-  options: BrowserServiceOptions
-): Promise<boolean> {
-  if (!page || !isRunning) {
-    throw new Error('浏览器未初始化')
-  }
+export async function registerAccount(data: RegistrationData, options: BrowserServiceOptions): Promise<boolean> {
+  if (!page || !isRunning) throw new Error('浏览器未初始化')
 
   try {
     options.onLog('info', '正在打开注册页面...')
@@ -167,12 +237,12 @@ export async function registerAccount(
     await humanDelay(2000, 4000)
     await simulateHumanBehavior(page)
 
-    await page.waitForSelector(EMAIL_SELECTORS, { timeout: 20000 })
+    await page.waitForSelector(SELECTORS.email, { timeout: 20000 })
     options.onLog('success', '注册页面加载完成')
     await humanDelay(500, 1500)
 
     options.onLog('info', `填写邮箱: ${data.email}`)
-    const emailInput = await page.$(EMAIL_SELECTORS)
+    const emailInput = await page.$(SELECTORS.email)
     if (!emailInput) throw new Error('未找到邮箱输入框')
 
     await humanClick(emailInput, page)
@@ -184,7 +254,7 @@ export async function registerAccount(
     await simulateHumanBehavior(page)
 
     options.onLog('info', '填写密码...')
-    const passwordInputs = await page.$$(PASSWORD_SELECTORS)
+    const passwordInputs = await page.$$(SELECTORS.password)
     if (passwordInputs.length === 0) throw new Error('未找到密码输入框')
 
     for (const input of passwordInputs) {
@@ -207,23 +277,7 @@ export async function registerAccount(
     options.onLog('info', '点击注册按钮...')
     await humanDelay(300, 800)
 
-    const clicked = await page.evaluate(() => {
-      const buttons = Array.from(document.querySelectorAll('button'))
-      for (const btn of buttons) {
-        const text = (btn.textContent || '').toLowerCase()
-        if (text.includes('continue') || text.includes('sign up') || text.includes('submit')) {
-          btn.click()
-          return true
-        }
-      }
-      const submitBtn = document.querySelector('button[type="submit"]') as HTMLButtonElement | null
-      if (submitBtn) {
-        submitBtn.click()
-        return true
-      }
-      return false
-    })
-
+    const clicked = await clickButtonByText(['continue', 'sign up', 'submit'])
     if (!clicked) throw new Error('未找到提交按钮')
 
     await humanDelay(2000, 4000)
@@ -232,104 +286,19 @@ export async function registerAccount(
 
     return true
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : '未知错误'
-    options.onLog('error', `注册过程出错: ${message}`)
+    options.onLog('error', `注册过程出错: ${getErrorMessage(error)}`)
     return false
   }
 }
 
-function getTypingDelay(): number {
-  return Math.floor(Math.random() * 80) + 50
-}
-
-const TURNSTILE_TIMEOUT = 120000
-
-async function waitForTurnstile(targetPage: PuppeteerPage, options: BrowserServiceOptions): Promise<void> {
-  const startTime = Date.now()
-  await humanDelay(2000, 4000)
-
-  while (Date.now() - startTime < TURNSTILE_TIMEOUT) {
-    await simulateHumanBehavior(targetPage)
-
-    const turnstileFrame = await targetPage.$('iframe[src*="challenges.cloudflare.com"], .cf-turnstile iframe')
-    if (!turnstileFrame) return
-
-    const isVerified = await targetPage.evaluate(() => {
-      const input = document.querySelector('input[name="cf-turnstile-response"]') as HTMLInputElement | null
-      if (input?.value) return true
-      return !!document.querySelector('.cf-turnstile-success, [data-turnstile-success]')
-    })
-
-    if (isVerified) {
-      options.onLog('success', 'Turnstile 验证完成')
-      return
-    }
-
-    const hasError = await targetPage.evaluate(() =>
-      !!document.querySelector('.cf-turnstile-error, [data-turnstile-error]')
-    )
-    if (hasError) {
-      options.onLog('warning', 'Turnstile 验证出现错误，等待重试...')
-    }
-
-    await humanDelay(800, 1500)
-  }
-
-  throw new Error('Turnstile验证超时')
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms))
-}
-
-function humanDelay(min: number, max: number): Promise<void> {
-  const ms = Math.floor(Math.random() * (max - min + 1)) + min
-  return new Promise(resolve => setTimeout(resolve, ms))
-}
-
-function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>(resolve => setTimeout(() => resolve(fallback), ms))
-  ])
-}
-
-async function simulateHumanBehavior(targetPage: PuppeteerPage): Promise<void> {
-  try {
-    const x = Math.floor(Math.random() * 800) + 100
-    const y = Math.floor(Math.random() * 600) + 100
-    await withTimeout(targetPage.mouse.move(x, y), 1000, undefined)
-    await humanDelay(50, 150)
-  } catch {
-    // 忽略鼠标移动错误
-  }
-}
-
-async function humanClick(element: PuppeteerElement, targetPage: PuppeteerPage): Promise<void> {
-  try {
-    const box = await withTimeout(element.boundingBox(), 2000, null)
-    if (box) {
-      const x = box.x + box.width / 2 + (Math.random() * 10 - 5)
-      const y = box.y + box.height / 2 + (Math.random() * 10 - 5)
-      await withTimeout(targetPage.mouse.move(x, y), 1000, undefined)
-      await humanDelay(50, 150)
-    }
-  } catch {
-    // 忽略鼠标操作错误
-  }
-  await element.click()
-}
-
 export async function inputVerificationCode(code: string, options: BrowserServiceOptions): Promise<boolean> {
-  if (!page || !isRunning) {
-    throw new Error('浏览器未初始化')
-  }
+  if (!page || !isRunning) throw new Error('浏览器未初始化')
 
   try {
     options.onLog('info', `输入验证码: ${code}`)
     await delay(2000)
 
-    const codeInput = await page.$(CODE_SELECTORS)
+    const codeInput = await page.$(SELECTORS.code)
     if (!codeInput) {
       options.onLog('error', '未找到验证码输入框')
       return false
@@ -359,33 +328,13 @@ export async function inputVerificationCode(code: string, options: BrowserServic
     options.onLog('success', '验证码提交成功')
     return true
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : '未知错误'
-    options.onLog('error', `验证码输入出错: ${message}`)
+    options.onLog('error', `验证码输入出错: ${getErrorMessage(error)}`)
     return false
   }
 }
 
-function generateRandomName(): string {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
-  let result = ''
-  for (let i = 0; i < 5; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length))
-  }
-  return result
-}
-
-export interface Context7ApiKeyResult {
-  success: boolean
-  apiKey?: string
-  keyName?: string
-  requestsUsed?: number
-  requestsLimit?: number
-}
-
 export async function createContext7ApiKey(options: BrowserServiceOptions): Promise<Context7ApiKeyResult> {
-  if (!page || !isRunning) {
-    throw new Error('浏览器未初始化')
-  }
+  if (!page || !isRunning) throw new Error('浏览器未初始化')
 
   try {
     options.onLog('info', '正在进入 Dashboard 获取 API Key...')
@@ -396,24 +345,17 @@ export async function createContext7ApiKey(options: BrowserServiceOptions): Prom
 
     if (!currentUrl.includes('/dashboard')) {
       options.onLog('info', '点击 Dashboard 按钮...')
-
       const dashboardClicked = await page.evaluate(() => {
-        const buttons = Array.from(document.querySelectorAll('button, a'))
-        for (const btn of buttons) {
-          const text = (btn.textContent || '').toLowerCase()
-          if (text.includes('dashboard')) {
-            (btn as HTMLElement).click()
-            return true
-          }
-        }
+        const btn = Array.from(document.querySelectorAll('button, a'))
+          .find(b => (b.textContent || '').toLowerCase().includes('dashboard'))
+        if (btn) { (btn as HTMLElement).click(); return true }
         return false
       })
 
       if (!dashboardClicked) {
         options.onLog('info', '直接导航到 Dashboard 页面...')
-        await page.goto('https://context7.com/dashboard', { waitUntil: 'networkidle2', timeout: 30000 })
+        await page.goto(DASHBOARD_URL, { waitUntil: 'networkidle2', timeout: 30000 })
       }
-
       await humanDelay(2000, 4000)
     }
 
@@ -423,24 +365,18 @@ export async function createContext7ApiKey(options: BrowserServiceOptions): Prom
     const quotaInfo = await page.evaluate(() => {
       const text = document.body.innerText
       const match = text.match(/(\d+)\/(\d+,?\d*)/)
-      if (match) {
-        return { used: parseInt(match[1]), limit: parseInt(match[2].replace(',', '')) }
-      }
-      return { used: 0, limit: 1000 }
+      return match
+        ? { used: parseInt(match[1]), limit: parseInt(match[2].replace(',', '')) }
+        : { used: 0, limit: 1000 }
     })
 
     options.onLog('info', `API 配额: ${quotaInfo.used}/${quotaInfo.limit}`)
     options.onLog('info', '查找 Create API Key 按钮...')
 
     const createButtonClicked = await page.evaluate(() => {
-      const buttons = Array.from(document.querySelectorAll('button'))
-      for (const btn of buttons) {
-        const text = (btn.textContent || '').toLowerCase()
-        if (text.includes('create api key')) {
-          btn.click()
-          return true
-        }
-      }
+      const btn = Array.from(document.querySelectorAll('button'))
+        .find(b => (b.textContent || '').toLowerCase().includes('create api key'))
+      if (btn) { btn.click(); return true }
       return false
     })
 
@@ -455,15 +391,13 @@ export async function createContext7ApiKey(options: BrowserServiceOptions): Prom
     const keyName = generateRandomName()
     options.onLog('info', `输入 API Key 名称: ${keyName}`)
 
-    const inputFound = await page.evaluate((name) => {
+    const inputFound = await page.evaluate((name: string) => {
       const inputs = Array.from(document.querySelectorAll('input[type="text"], input:not([type])'))
       for (const input of inputs) {
         const placeholder = (input as HTMLInputElement).placeholder || ''
         const label = input.closest('form')?.querySelector('label')?.textContent || ''
-        if (placeholder.toLowerCase().includes('key') ||
-            placeholder.toLowerCase().includes('name') ||
-            label.toLowerCase().includes('key') ||
-            label.toLowerCase().includes('name')) {
+        if (placeholder.toLowerCase().includes('key') || placeholder.toLowerCase().includes('name') ||
+            label.toLowerCase().includes('key') || label.toLowerCase().includes('name')) {
           (input as HTMLInputElement).value = name
           input.dispatchEvent(new Event('input', { bubbles: true }))
           return true
@@ -490,75 +424,7 @@ export async function createContext7ApiKey(options: BrowserServiceOptions): Prom
     await humanDelay(500, 800)
     options.onLog('info', '确认创建 API Key...')
 
-    let confirmClicked = false
-    const confirmResult = await page.evaluate(() => {
-      const buttons = Array.from(document.querySelectorAll('button'))
-
-      const cancelBtn = buttons.find(btn => (btn.textContent || '').trim().toLowerCase() === 'cancel')
-      if (cancelBtn) {
-        const parent = cancelBtn.parentElement
-        if (parent) {
-          const siblings = Array.from(parent.querySelectorAll('button'))
-          for (const btn of siblings) {
-            const text = (btn.textContent || '').trim().toLowerCase()
-            if (text !== 'cancel' && text.includes('create')) {
-              (btn as HTMLElement).click()
-              return { clicked: true, buttonText: text }
-            }
-          }
-        }
-      }
-
-      for (const btn of buttons) {
-        const text = (btn.textContent || '').trim().toLowerCase()
-        const classList = btn.className.toLowerCase()
-        const isPrimary = classList.includes('primary') || classList.includes('success') ||
-                         classList.includes('green') || classList.includes('bg-')
-        if (text === 'create api key' && isPrimary) {
-          (btn as HTMLElement).click()
-          return { clicked: true, buttonText: text }
-        }
-      }
-
-      const createBtns = buttons.filter(btn => (btn.textContent || '').trim().toLowerCase() === 'create api key')
-      if (createBtns.length > 0) {
-        const lastBtn = createBtns[createBtns.length - 1]
-        ;(lastBtn as HTMLElement).click()
-        return { clicked: true, buttonText: 'create api key (last)' }
-      }
-
-      return { clicked: false, buttonText: '' }
-    })
-
-    if (confirmResult.clicked) {
-      confirmClicked = true
-      options.onLog('info', `点击按钮: "${confirmResult.buttonText}"`)
-    }
-
-    if (!confirmClicked) {
-      const allButtons = await page.$$('button')
-      const buttonInfos: string[] = []
-
-      for (const btn of allButtons) {
-        const info = await btn.evaluate(el => ({
-          text: (el.textContent || '').trim(),
-          visible: (el as HTMLElement).offsetParent !== null
-        }))
-        buttonInfos.push(info.text)
-
-        if (info.text.toLowerCase() === 'create api key' && info.visible) {
-          await humanClick(btn, page)
-          confirmClicked = true
-          options.onLog('info', `Puppeteer 点击: "${info.text}"`)
-          break
-        }
-      }
-
-      if (!confirmClicked) {
-        options.onLog('warning', `页面按钮列表: ${buttonInfos.join(', ')}`)
-      }
-    }
-
+    const confirmClicked = await confirmCreateApiKey(options)
     if (!confirmClicked) {
       options.onLog('error', '未找到确认创建按钮')
       return { success: false }
@@ -567,111 +433,130 @@ export async function createContext7ApiKey(options: BrowserServiceOptions): Prom
     await delay(500)
     options.onLog('info', '等待 API Key 生成...')
 
-    let apiKeyResult: string | null = null
-    for (let attempt = 0; attempt < 5; attempt++) {
-      await humanDelay(1500, 2000)
-
-      apiKeyResult = await page.evaluate(() => {
-        const text = document.body.innerText
-        const match = text.match(/ctx7sk-[a-zA-Z0-9-]{20,}/)
-        if (match) return match[0]
-
-        const codeElements = Array.from(document.querySelectorAll('code, pre, input[readonly], input[type="text"], .api-key, [class*="key"]'))
-        for (const el of codeElements) {
-          const content = (el as HTMLElement).innerText || (el as HTMLInputElement).value || ''
-          if (content.includes('ctx7sk-')) {
-            const keyMatch = content.match(/ctx7sk-[a-zA-Z0-9-]{20,}/)
-            if (keyMatch) return keyMatch[0]
-          }
-        }
-        return null
-      })
-
-      if (apiKeyResult) {
-        options.onLog('info', `第 ${attempt + 1} 次尝试获取成功`)
-        break
-      }
-      options.onLog('info', `第 ${attempt + 1} 次尝试未获取到 API Key，继续等待...`)
-    }
-
-    if (!apiKeyResult) {
-      options.onLog('warning', '未能获取到完整的 API Key')
-      await page.evaluate(() => {
-        const doneBtn = Array.from(document.querySelectorAll('button')).find(b =>
-          (b.textContent || '').toLowerCase().includes('done') ||
-          (b.textContent || '').toLowerCase().includes('close')
-        )
-        if (doneBtn) (doneBtn as HTMLElement).click()
-      })
-      return { success: true, keyName, requestsUsed: quotaInfo.used, requestsLimit: quotaInfo.limit }
-    }
-
-    options.onLog('success', `API Key 获取成功: ${apiKeyResult.slice(0, 12)}****`)
+    const apiKeyResult = await extractApiKey(options)
 
     await page.evaluate(() => {
-      const buttons = Array.from(document.querySelectorAll('button'))
-      for (const btn of buttons) {
-        const text = (btn.textContent || '').toLowerCase()
-        if (text.includes('done') || text.includes('close') || text === 'ok') {
-          (btn as HTMLElement).click()
-          break
-        }
-      }
+      const btn = Array.from(document.querySelectorAll('button'))
+        .find(b => ['done', 'close', 'ok'].includes((b.textContent || '').toLowerCase().trim()))
+      if (btn) (btn as HTMLElement).click()
     })
 
     await humanDelay(1000, 2000)
 
-    return {
-      success: true,
-      apiKey: apiKeyResult,
-      keyName,
-      requestsUsed: quotaInfo.used,
-      requestsLimit: quotaInfo.limit
+    if (apiKeyResult) {
+      options.onLog('success', `API Key 获取成功: ${apiKeyResult.slice(0, 12)}****`)
+      return { success: true, apiKey: apiKeyResult, keyName, ...quotaInfo }
     }
+
+    options.onLog('warning', '未能获取到完整的 API Key')
+    return { success: true, keyName, ...quotaInfo }
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : '未知错误'
-    options.onLog('error', `获取 API Key 出错: ${message}`)
+    options.onLog('error', `获取 API Key 出错: ${getErrorMessage(error)}`)
     return { success: false }
   }
 }
 
+async function confirmCreateApiKey(options: BrowserServiceOptions): Promise<boolean> {
+  if (!page) return false
+
+  const result = await page.evaluate(() => {
+    const buttons = Array.from(document.querySelectorAll('button'))
+    
+    const cancelBtn = buttons.find(btn => (btn.textContent || '').trim().toLowerCase() === 'cancel')
+    if (cancelBtn?.parentElement) {
+      const sibling = Array.from(cancelBtn.parentElement.querySelectorAll('button'))
+        .find(b => {
+          const t = (b.textContent || '').trim().toLowerCase()
+          return t !== 'cancel' && t.includes('create')
+        })
+      if (sibling) { (sibling as HTMLElement).click(); return { clicked: true, text: sibling.textContent } }
+    }
+
+    for (const btn of buttons) {
+      const text = (btn.textContent || '').trim().toLowerCase()
+      const isPrimary = btn.className.toLowerCase().match(/primary|success|green|bg-/)
+      if (text === 'create api key' && isPrimary) {
+        btn.click()
+        return { clicked: true, text }
+      }
+    }
+
+    const createBtns = buttons.filter(btn => (btn.textContent || '').trim().toLowerCase() === 'create api key')
+    if (createBtns.length > 0) {
+      const lastBtn = createBtns[createBtns.length - 1]
+      ;(lastBtn as HTMLElement).click()
+      return { clicked: true, text: 'create api key' }
+    }
+
+    return { clicked: false, text: '' }
+  })
+
+  if (result.clicked) {
+    options.onLog('info', `点击按钮: "${result.text}"`)
+    return true
+  }
+
+  const allButtons = await page.$$('button')
+  for (const btn of allButtons) {
+    const info = await btn.evaluate(el => ({
+      text: (el.textContent || '').trim(),
+      visible: (el as HTMLElement).offsetParent !== null
+    }))
+    if (info.text.toLowerCase() === 'create api key' && info.visible) {
+      await humanClick(btn, page)
+      options.onLog('info', `Puppeteer 点击: "${info.text}"`)
+      return true
+    }
+  }
+
+  return false
+}
+
+async function extractApiKey(options: BrowserServiceOptions): Promise<string | null> {
+  if (!page) return null
+
+  for (let attempt = 0; attempt < 5; attempt++) {
+    await humanDelay(1500, 2000)
+
+    const apiKey = await page.evaluate(() => {
+      const text = document.body.innerText
+      const match = text.match(/ctx7sk-[a-zA-Z0-9-]{20,}/)
+      if (match) return match[0]
+
+      const elements = Array.from(document.querySelectorAll('code, pre, input[readonly], input[type="text"], .api-key, [class*="key"]'))
+      for (const el of elements) {
+        const content = (el as HTMLElement).innerText || (el as HTMLInputElement).value || ''
+        const keyMatch = content.match(/ctx7sk-[a-zA-Z0-9-]{20,}/)
+        if (keyMatch) return keyMatch[0]
+      }
+      return null
+    })
+
+    if (apiKey) {
+      options.onLog('info', `第 ${attempt + 1} 次尝试获取成功`)
+      return apiKey
+    }
+    options.onLog('info', `第 ${attempt + 1} 次尝试未获取到 API Key，继续等待...`)
+  }
+
+  return null
+}
+
+function generateRandomName(): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+  return Array.from({ length: 5 }, () => chars.charAt(Math.floor(Math.random() * chars.length))).join('')
+}
+
 export async function closeBrowser(): Promise<void> {
   if (browser) {
-    try {
-      await browser.close()
-    } catch {
-      // 忽略关闭错误
-    }
+    try { await browser.close() } catch {}
     browser = null
     page = null
   }
-  
-  // 强制终止所有 puppeteer 启动的 Chrome 进程
   await killChromeProcesses()
-  
-  // 等待进程完全退出
   await delay(2000)
 }
 
-async function killChromeProcesses(): Promise<void> {
-  try {
-    const cmd = process.platform === 'win32'
-      ? 'taskkill /F /IM chrome.exe /T 2>nul'
-      : 'pkill -9 chrome 2>/dev/null || true'
-    await execAsync(cmd)
-  } catch {
-    // 忽略错误（可能没有进程需要终止）
-  }
-}
-
-export function startRegistration(): void {
-  isRunning = true
-}
-
-export function stopRegistration(): void {
-  isRunning = false
-}
-
-export function isRegistrationRunning(): boolean {
-  return isRunning
-}
+export function startRegistration(): void { isRunning = true }
+export function stopRegistration(): void { isRunning = false }
+export function isRegistrationRunning(): boolean { return isRunning }

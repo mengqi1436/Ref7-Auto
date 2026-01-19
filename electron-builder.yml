@@ -26,11 +26,8 @@ win:
     - target: portable
       arch:
         - x64
-    - target: zip
-      arch:
-        - x64
-  icon: assets/icon.png
-  artifactName: ${productName}-${version}-win-${arch}.${ext}
+  icon: assets/favicon.ico
+  artifactName: REF7-Auto-Register-${version}-win-${arch}.${ext}
   publisherName: REF7
 
 mac:
@@ -39,18 +36,14 @@ mac:
       arch:
         - x64
         - arm64
-    - target: zip
-      arch:
-        - x64
-        - arm64
   icon: assets/icon.png
-  artifactName: ${productName}-${version}-mac-${arch}.${ext}
+  artifactName: REF7-Auto-Register-${version}-mac-${arch}.${ext}
   category: public.app-category.utilities
   hardenedRuntime: true
   gatekeeperAssess: false
 
 dmg:
-  artifactName: ${productName}-${version}-mac-${arch}.${ext}
+  artifactName: REF7-Auto-Register-${version}-mac-${arch}.${ext}
   writeUpdateInfo: false
   contents:
     - x: 130
@@ -71,11 +64,8 @@ linux:
     - target: deb
       arch:
         - x64
-    - target: tar.gz
-      arch:
-        - x64
   icon: assets/icon.png
-  artifactName: ${productName}-${version}-linux-${arch}.${ext}
+  artifactName: REF7-Auto-Register-${version}-linux-${arch}.${ext}
   category: Utility
   synopsis: REF7 自动化注册管理软件
   description: 一款专为REF7平台设计的自动化账号注册管理工具
@@ -89,11 +79,14 @@ nsis:
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: REF7 Auto Register
+  installerIcon: assets/favicon.ico
+  uninstallerIcon: assets/favicon.ico
+  installerHeaderIcon: assets/favicon.ico
   deleteAppDataOnUninstall: false
   differentialPackage: false
 
 portable:
-  artifactName: ${productName}-${version}-win-portable.${ext}
+  artifactName: REF7-Auto-Register-${version}-win-portable.${ext}
 
 extraResources:
   - from: assets/
@@ -105,4 +98,4 @@ publish:
   provider: github
   owner: mengqi1436
   repo: Ref7-Auto
-  releaseType: release
+  releaseType: draft

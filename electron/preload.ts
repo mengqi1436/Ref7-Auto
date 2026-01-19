@@ -15,6 +15,7 @@ interface Account {
   apiKey?: string
   apiKeyName?: string
   requestsLimit?: number
+  refApiKey?: string
 }
 
 interface RegistrationConfig {
@@ -27,6 +28,7 @@ interface RegistrationConfig {
 }
 
 interface RefRegistrationConfig {
+  accountId: number
   email: string
   password: string
   showBrowser: boolean
@@ -87,6 +89,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   deleteAccounts: (ids: number[]): Promise<void> => ipcRenderer.invoke('accounts:deleteMany', ids),
   updateAccountStatus: (id: number, status: AccountStatus): Promise<void> => 
     ipcRenderer.invoke('accounts:updateStatus', id, status),
+  updateAccountRefApiKey: (id: number, refApiKey: string): Promise<void> =>
+    ipcRenderer.invoke('accounts:updateRefApiKey', id, refApiKey),
   exportAccounts: (): Promise<string | null> => ipcRenderer.invoke('accounts:export'),
   importAccounts: (): Promise<{
     total?: number

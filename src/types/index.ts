@@ -25,6 +25,7 @@ export interface RegistrationConfig {
 }
 
 export interface RefRegistrationConfig {
+  accountId: number
   email: string
   password: string
   showBrowser: boolean

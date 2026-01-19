@@ -26,18 +26,14 @@ interface PuppeteerPage {
   waitForSelector(selector: string, options?: { timeout?: number }): Promise<unknown>
   waitForNavigation(options?: { waitUntil?: string; timeout?: number }): Promise<unknown>
   $(selector: string): Promise<PuppeteerElement | null>
-  $$(selector: string): Promise<PuppeteerElement[]>
   evaluate<T>(fn: () => T): Promise<T>
   evaluate<T, A>(fn: (arg: A) => T, arg: A): Promise<T>
-  mouse: { move(x: number, y: number): Promise<void> }
   setExtraHTTPHeaders(headers: Record<string, string>): Promise<void>
 }
 
 interface PuppeteerElement {
-  click(options?: { clickCount?: number }): Promise<void>
-  type(text: string, options?: { delay?: number }): Promise<void>
-  evaluate<T>(fn: (el: Element) => T): Promise<T>
-  boundingBox(): Promise<{ x: number; y: number; width: number; height: number } | null>
+  click(): Promise<void>
+  type(text: string): Promise<void>
 }
 
 export interface RefApiKeyResult {
@@ -50,9 +46,11 @@ let refBrowser: PuppeteerBrowser | null = null
 let refPage: PuppeteerPage | null = null
 let isRefRunning = false
 
-const REF_SIGNUP_URL = 'https://ref.tools/signup'
-const REF_LOGIN_URL = 'https://ref.tools/login'
-const REF_API_KEYS_URL = 'https://ref.tools/keys'
+const REF_URLS = {
+  signup: 'https://ref.tools/signup',
+  login: 'https://ref.tools/login',
+  keys: 'https://ref.tools/keys'
+} as const
 
 const BROWSER_ARGS = [
   '--disable-blink-features=AutomationControlled',
@@ -66,10 +64,13 @@ const BROWSER_ARGS = [
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
+const getErrorMessage = (error: unknown): string => 
+  error instanceof Error ? error.message : '未知错误'
+
 async function hideChrome(): Promise<void> {
   if (process.platform !== 'win32') return
   try {
-    const cmd = `powershell -ExecutionPolicy Bypass -Command "
+    await execAsync(`powershell -ExecutionPolicy Bypass -Command "
       Add-Type -Name Win -Namespace Native -MemberDefinition '
         [DllImport(\\\"user32.dll\\\")] public static extern bool MoveWindow(IntPtr hWnd, int X, int Y, int nWidth, int nHeight, bool bRepaint);
         [DllImport(\\\"user32.dll\\\")] public static extern int GetWindowLong(IntPtr hWnd, int nIndex);
@@ -81,9 +82,36 @@ async function hideChrome(): Promise<void> {
         $style = [Native.Win]::GetWindowLong($h, -20);
         [Native.Win]::SetWindowLong($h, -20, $style -bor 0x80);
       }
-    "`
-    await execAsync(cmd)
+    "`)
   } catch {}
+}
+
+async function fillInput(selector: string, value: string, errorMsg: string): Promise<void> {
+  if (!refPage) throw new Error('浏览器未初始化')
+  const input = await refPage.$(selector)
+  if (!input) throw new Error(errorMsg)
+  await input.click()
+  await input.type(value)
+}
+
+async function clickButtonByText(text: string): Promise<boolean> {
+  if (!refPage) return false
+  return refPage.evaluate((targetText: string) => {
+    const btn = Array.from(document.querySelectorAll('button'))
+      .find(b => b.textContent?.trim() === targetText)
+    if (btn) { btn.click(); return true }
+    return false
+  }, text)
+}
+
+async function getCurrentUrl(): Promise<string> {
+  if (!refPage) return ''
+  return refPage.evaluate(() => window.location.href)
+}
+
+async function getPageText(): Promise<string> {
+  if (!refPage) return ''
+  return refPage.evaluate(() => document.body.innerText)
 }
 
 export async function initRefBrowser(options: RefBrowserOptions): Promise<void> {
@@ -129,53 +157,38 @@ export async function registerRefAccount(data: RefRegistrationData, options: Ref
 
   try {
     options.onLog('info', '打开 Ref 注册页面...')
-    await refPage.goto(REF_SIGNUP_URL, { waitUntil: 'networkidle2', timeout: 30000 })
+    await refPage.goto(REF_URLS.signup, { waitUntil: 'networkidle2', timeout: 30000 })
     await delay(1000)
 
-    const emailSelector = 'input[placeholder="Enter your email"]'
-    await refPage.waitForSelector(emailSelector, { timeout: 20000 })
+    await refPage.waitForSelector('input[placeholder="Enter your email"]', { timeout: 20000 })
     options.onLog('success', '注册页面加载完成')
 
-    // 填写邮箱 - 直接输入，不模拟
     options.onLog('info', `填写邮箱: ${data.email}`)
-    const emailInput = await refPage.$(emailSelector)
-    if (!emailInput) throw new Error('未找到邮箱输入框')
-    await emailInput.click()
-    await emailInput.type(data.email)
+    await fillInput('input[placeholder="Enter your email"]', data.email, '未找到邮箱输入框')
 
-    // 填写密码
     options.onLog('info', '填写密码...')
-    const passwordInput = await refPage.$('input[placeholder="Create a password"]')
-    if (!passwordInput) throw new Error('未找到密码输入框')
-    await passwordInput.click()
-    await passwordInput.type(data.password)
+    await fillInput('input[placeholder="Create a password"]', data.password, '未找到密码输入框')
 
-    // 填写确认密码
     options.onLog('info', '填写确认密码...')
-    const confirmInput = await refPage.$('input[placeholder="Confirm your password"]')
-    if (!confirmInput) throw new Error('未找到确认密码输入框')
-    await confirmInput.click()
-    await confirmInput.type(data.password)
+    await fillInput('input[placeholder="Confirm your password"]', data.password, '未找到确认密码输入框')
 
-    // 点击注册按钮
     options.onLog('info', '点击注册按钮...')
     await refPage.evaluate(() => {
-      const buttons = Array.from(document.querySelectorAll('button'))
-      const signupBtn = buttons.find(btn => btn.textContent?.trim().toLowerCase() === 'sign up')
-      signupBtn?.click()
+      const btn = Array.from(document.querySelectorAll('button'))
+        .find(b => b.textContent?.trim().toLowerCase() === 'sign up')
+      btn?.click()
     })
 
     await delay(2000)
     await refPage.waitForNavigation({ waitUntil: 'networkidle2', timeout: 10000 }).catch(() => {})
 
-    // 检查是否账户已存在
-    const pageContent = await refPage.evaluate(() => document.body.innerText)
+    const pageContent = await getPageText()
     if (pageContent.includes('already exists') || pageContent.includes('An account with this email')) {
       options.onLog('warning', '账户已存在，跳转登录页面...')
       return await loginRefAccount(data, options)
     }
 
-    const url = await refPage.evaluate(() => window.location.href)
+    const url = await getCurrentUrl()
     if (url.includes('/dashboard') || url.includes('/keys') || url.includes('/account')) {
       options.onLog('success', 'Ref 注册成功')
       return true
@@ -184,7 +197,7 @@ export async function registerRefAccount(data: RefRegistrationData, options: Ref
     options.onLog('success', '注册表单已提交')
     return true
   } catch (error: unknown) {
-    options.onLog('error', `注册失败: ${error instanceof Error ? error.message : '未知错误'}`)
+    options.onLog('error', `注册失败: ${getErrorMessage(error)}`)
     return false
   }
 }
@@ -194,52 +207,25 @@ async function loginRefAccount(data: RefRegistrationData, options: RefBrowserOpt
 
   try {
     options.onLog('info', '打开登录页面...')
-    await refPage.goto(REF_LOGIN_URL, { waitUntil: 'networkidle2', timeout: 30000 })
+    await refPage.goto(REF_URLS.login, { waitUntil: 'networkidle2', timeout: 30000 })
     await delay(1000)
 
-    // 填写登录信息 - 使用精确的 placeholder 选择器
     options.onLog('info', '填写登录信息...')
-    const emailInput = await refPage.$('input[placeholder="Enter your email"]')
-    const passwordInput = await refPage.$('input[placeholder="Enter your password"]')
+    await fillInput('input[placeholder="Enter your email"]', data.email, '未找到邮箱输入框')
+    await fillInput('input[placeholder="Enter your password"]', data.password, '未找到密码输入框')
 
-    if (!emailInput || !passwordInput) throw new Error('未找到登录表单')
-
-    await emailInput.click()
-    await emailInput.type(data.email)
-
-    await passwordInput.click()
-    await passwordInput.type(data.password)
-
-    // 点击 "Sign in with Email" 按钮 - 使用精确文本匹配
     options.onLog('info', '点击登录按钮...')
-    const clicked = await refPage.evaluate(() => {
-      const buttons = Array.from(document.querySelectorAll('button'))
-      // 精确查找文本为 "Sign in with Email" 的按钮
-      for (let i = 0; i < buttons.length; i++) {
-        const btn = buttons[i]
-        const text = btn.textContent?.trim() || ''
-        // 精确匹配，排除 GitHub/Google/SSO 按钮
-        if (text === 'Sign in with Email') {
-          btn.click()
-          return true
-        }
-      }
-      return false
-    })
+    const clicked = await clickButtonByText('Sign in with Email')
 
     if (!clicked) {
-      options.onLog('warning', '未找到 Sign in with Email 按钮，尝试提交表单...')
-      // 备选：直接按 Enter 提交表单
-      await refPage.evaluate(() => {
-        const form = document.querySelector('form')
-        if (form) form.submit()
-      })
+      options.onLog('warning', '未找到登录按钮，尝试提交表单...')
+      await refPage.evaluate(() => document.querySelector('form')?.submit())
     }
 
     await delay(3000)
     await refPage.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {})
 
-    const url = await refPage.evaluate(() => window.location.href)
+    const url = await getCurrentUrl()
     if (url.includes('/dashboard') || url.includes('/keys') || url.includes('/account')) {
       options.onLog('success', '登录成功')
       return true
@@ -248,7 +234,7 @@ async function loginRefAccount(data: RefRegistrationData, options: RefBrowserOpt
     options.onLog('warning', '登录状态未知')
     return true
   } catch (error: unknown) {
-    options.onLog('error', `登录失败: ${error instanceof Error ? error.message : '未知错误'}`)
+    options.onLog('error', `登录失败: ${getErrorMessage(error)}`)
     return false
   }
 }
@@ -258,14 +244,10 @@ export async function sendRefVerificationEmail(options: RefBrowserOptions): Prom
 
   try {
     options.onLog('info', '发送验证邮件...')
-
     const clicked = await refPage.evaluate(() => {
-      const buttons = Array.from(document.querySelectorAll('button'))
-      const btn = buttons.find(b => b.textContent?.includes('Send Verification Email'))
-      if (btn) {
-        btn.click()
-        return true
-      }
+      const btn = Array.from(document.querySelectorAll('button'))
+        .find(b => b.textContent?.includes('Send Verification Email'))
+      if (btn) { btn.click(); return true }
       return false
     })
 
@@ -278,7 +260,7 @@ export async function sendRefVerificationEmail(options: RefBrowserOptions): Prom
     options.onLog('success', '验证邮件发送请求已提交')
     return true
   } catch (error: unknown) {
-    options.onLog('error', `发送验证邮件失败: ${error instanceof Error ? error.message : '未知错误'}`)
+    options.onLog('error', `发送验证邮件失败: ${getErrorMessage(error)}`)
     return false
   }
 }
@@ -291,16 +273,15 @@ export async function clickRefVerificationLink(url: string, options: RefBrowserO
     await refPage.goto(url, { waitUntil: 'networkidle2', timeout: 30000 })
     await delay(3000)
 
-    const content = await refPage.evaluate(() => document.body.innerText.toLowerCase())
+    const content = (await getPageText()).toLowerCase()
     if (content.includes('verified') || content.includes('success') || content.includes('confirmed')) {
       options.onLog('success', '邮箱验证成功')
-      return true
+    } else {
+      options.onLog('info', '验证完成')
     }
-
-    options.onLog('info', '验证完成')
     return true
   } catch (error: unknown) {
-    options.onLog('error', `验证失败: ${error instanceof Error ? error.message : '未知错误'}`)
+    options.onLog('error', `验证失败: ${getErrorMessage(error)}`)
     return false
   }
 }
@@ -310,21 +291,15 @@ export async function getRefApiKey(options: RefBrowserOptions): Promise<RefApiKe
 
   try {
     options.onLog('info', '进入 API Keys 页面...')
-
-    // 直接访问 API Keys 页面
-    await refPage.goto(REF_API_KEYS_URL, { waitUntil: 'networkidle2', timeout: 30000 })
+    await refPage.goto(REF_URLS.keys, { waitUntil: 'networkidle2', timeout: 30000 })
     await delay(1500)
 
     options.onLog('info', '获取默认 API Key...')
-
-    // 查找页面中以 ref- 开头的完整 API Key (格式: ref- + 20位十六进制 = 24字符)
     const apiKey = await refPage.evaluate(() => {
       const elements = Array.from(document.body.querySelectorAll('*'))
-      for (let i = 0; i < elements.length; i++) {
-        const text = (elements[i] as HTMLElement).textContent || ''
-        if (text.startsWith('ref-') && text.length === 24 && /^ref-[a-f0-9]{20}$/i.test(text)) {
-          return text
-        }
+      for (const el of elements) {
+        const text = (el as HTMLElement).textContent || ''
+        if (/^ref-[a-f0-9]{20}$/i.test(text)) return text
       }
       return null
     })
@@ -337,7 +312,7 @@ export async function getRefApiKey(options: RefBrowserOptions): Promise<RefApiKe
     options.onLog('warning', '未找到 API Key')
     return { success: false, error: '未找到 API Key' }
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : '未知错误'
+    const message = getErrorMessage(error)
     options.onLog('error', `获取 API Key 失败: ${message}`)
     return { success: false, error: message }
   }

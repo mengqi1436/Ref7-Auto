@@ -1,6 +1,6 @@
 {
   "name": "ref7-auto-register",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "REF7 自动化注册管理软件",
   "main": "dist-electron/main.js",
   "scripts": {

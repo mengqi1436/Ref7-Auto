@@ -17,6 +17,7 @@ export interface IElectronAPI {
   deleteAccount: (id: number) => Promise<void>
   deleteAccounts: (ids: number[]) => Promise<void>
   updateAccountStatus: (id: number, status: AccountStatus) => Promise<void>
+  updateAccountRefApiKey: (id: number, refApiKey: string) => Promise<void>
   exportAccounts: () => Promise<string | null>
   importAccounts: () => Promise<{
     total?: number
@@ -36,8 +37,8 @@ export interface IElectronAPI {
   getSettings: () => Promise<AppSettings>
   saveSettings: (settings: AppSettings) => Promise<void>
 
-  getSystemTheme: () => Promise<'dark' | 'light'>
-  onSystemThemeChange: (callback: (theme: 'dark' | 'light') => void) => () => void
+  getSystemTheme: () => Promise<Theme>
+  onSystemThemeChange: (callback: (theme: Theme) => void) => () => void
 
   minimizeWindow: () => void
   maximizeWindow: () => void
