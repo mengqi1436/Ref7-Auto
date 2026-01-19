@@ -18,6 +18,9 @@ files:
 asar: true
 compression: maximum
 
+# 禁用 blockmap 文件生成（用于增量更新，但会增加发布文件数量）
+generateUpdatesFilesForAllChannels: false
+
 win:
   target:
     - target: nsis
@@ -51,6 +54,7 @@ mac:
 
 dmg:
   artifactName: ${productName}-${version}-mac-${arch}.${ext}
+  writeUpdateInfo: false
   contents:
     - x: 130
       y: 220
@@ -92,6 +96,7 @@ nsis:
   uninstallerIcon: assets/icon.png
   installerHeaderIcon: assets/icon.png
   deleteAppDataOnUninstall: false
+  differentialPackage: false
 
 portable:
   artifactName: ${productName}-${version}-win-portable.${ext}
