@@ -95,4 +95,4 @@ publish:
   provider: github
   owner: mengqi1436
   repo: Ref7-Auto
-  releaseType: draft
+  releaseType: release
