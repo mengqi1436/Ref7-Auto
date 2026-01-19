@@ -26,7 +26,7 @@ win:
     - target: portable
       arch:
         - x64
-  icon: assets/favicon.ico
+  icon: assets/icon.png
   artifactName: REF7-Auto-Register-${version}-win-${arch}.${ext}
   publisherName: REF7
 
@@ -79,9 +79,6 @@ nsis:
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: REF7 Auto Register
-  installerIcon: assets/favicon.ico
-  uninstallerIcon: assets/favicon.ico
-  installerHeaderIcon: assets/favicon.ico
   deleteAppDataOnUninstall: false
   differentialPackage: false
 
