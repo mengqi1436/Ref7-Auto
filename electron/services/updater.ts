@@ -2,13 +2,11 @@ import { autoUpdater, UpdateInfo } from 'electron-updater'
 import { BrowserWindow, ipcMain } from 'electron'
 import log from 'electron-log'
 
-// 配置日志
 autoUpdater.logger = log
 ;(autoUpdater.logger as typeof log).transports.file.level = 'info'
-
-// 禁用自动下载，让用户确认后再下载
 autoUpdater.autoDownload = false
 autoUpdater.autoInstallOnAppQuit = true
+autoUpdater.disableDifferentialDownload = true
 
 let mainWindow: BrowserWindow | null = null
 
@@ -27,22 +25,18 @@ export interface UpdateStatus {
 export function initAutoUpdater(window: BrowserWindow): void {
   mainWindow = window
 
-  // 检查更新时
   autoUpdater.on('checking-for-update', () => {
     sendUpdateStatus({ status: 'checking' })
   })
 
-  // 有可用更新
   autoUpdater.on('update-available', (info: UpdateInfo) => {
     sendUpdateStatus({ status: 'available', info })
   })
 
-  // 没有可用更新
   autoUpdater.on('update-not-available', (info: UpdateInfo) => {
     sendUpdateStatus({ status: 'not-available', info })
   })
 
-  // 下载进度
   autoUpdater.on('download-progress', (progress) => {
     sendUpdateStatus({
       status: 'downloading',
@@ -55,17 +49,14 @@ export function initAutoUpdater(window: BrowserWindow): void {
     })
   })
 
-  // 下载完成
   autoUpdater.on('update-downloaded', (info: UpdateInfo) => {
     sendUpdateStatus({ status: 'downloaded', info })
   })
 
-  // 错误处理
   autoUpdater.on('error', (error: Error) => {
     sendUpdateStatus({ status: 'error', error: error.message })
   })
 
-  // 注册 IPC 处理器
   registerIpcHandlers()
 }
 
@@ -74,7 +65,6 @@ function sendUpdateStatus(status: UpdateStatus): void {
 }
 
 function registerIpcHandlers(): void {
-  // 检查更新
   ipcMain.handle('updater:check', async () => {
     try {
       const result = await autoUpdater.checkForUpdates()
@@ -85,7 +75,6 @@ function registerIpcHandlers(): void {
     }
   })
 
-  // 开始下载更新
   ipcMain.handle('updater:download', async () => {
     try {
       await autoUpdater.downloadUpdate()
@@ -96,7 +85,6 @@ function registerIpcHandlers(): void {
     }
   })
 
-  // 安装更新并重启
   ipcMain.handle('updater:install', () => {
     autoUpdater.quitAndInstall(false, true)
   })

@@ -126,18 +126,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   openExternal: (url: string): Promise<boolean> => 
     ipcRenderer.invoke('shell:openExternal', url),
-  
-  checkForUpdates: (): Promise<{
-    hasUpdate: boolean
-    currentVersion: string
-    latestVersion?: string
-    releaseUrl?: string
-    error?: string
-  }> => ipcRenderer.invoke('app:checkForUpdates'),
-  
+
   getAppVersion: (): Promise<string> => ipcRenderer.invoke('app:getVersion'),
 
-  // 自动更新 API
   updaterCheck: (): Promise<{ success: boolean; updateInfo?: unknown; error?: string }> => 
     ipcRenderer.invoke('updater:check'),
   updaterDownload: (): Promise<{ success: boolean; error?: string }> => 

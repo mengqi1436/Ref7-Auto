@@ -46,17 +46,8 @@ export interface IElectronAPI {
 
   openExternal: (url: string) => Promise<boolean>
 
-  checkForUpdates: () => Promise<{
-    hasUpdate: boolean
-    currentVersion: string
-    latestVersion?: string
-    releaseUrl?: string
-    error?: string
-  }>
-
   getAppVersion: () => Promise<string>
 
-  // 自动更新 API
   updaterCheck: () => Promise<{ success: boolean; updateInfo?: unknown; error?: string }>
   updaterDownload: () => Promise<{ success: boolean; error?: string }>
   updaterInstall: () => void

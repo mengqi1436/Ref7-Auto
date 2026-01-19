@@ -20,14 +20,6 @@ export type {
   ImapMailConfig
 }
 
-interface UpdateInfo {
-  hasUpdate: boolean
-  currentVersion: string
-  latestVersion?: string
-  releaseUrl?: string
-  error?: string
-}
-
 interface ImportResult {
   total?: number
   imported?: number
@@ -66,10 +58,9 @@ interface ElectronAPI {
   onRegistrationError: (callback: (error: string) => void) => () => void
 
   openExternal: (url: string) => Promise<boolean>
-  checkForUpdates: () => Promise<UpdateInfo>
+
   getAppVersion: () => Promise<string>
 
-  // 自动更新 API
   updaterCheck: () => Promise<{ success: boolean; updateInfo?: unknown; error?: string }>
   updaterDownload: () => Promise<{ success: boolean; error?: string }>
   updaterInstall: () => void

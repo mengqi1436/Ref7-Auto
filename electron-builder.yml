@@ -51,6 +51,7 @@ mac:
 
 dmg:
   artifactName: ${productName}-${version}-mac-${arch}.${ext}
+  writeUpdateInfo: false
   contents:
     - x: 130
       y: 220
@@ -92,6 +93,7 @@ nsis:
   uninstallerIcon: assets/icon.png
   installerHeaderIcon: assets/icon.png
   deleteAppDataOnUninstall: false
+  differentialPackage: false
 
 portable:
   artifactName: ${productName}-${version}-win-portable.${ext}

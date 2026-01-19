@@ -1,5 +1,4 @@
 import { ipcMain, BrowserWindow, dialog, shell, app } from 'electron'
-import https from 'https'
 import fs from 'fs'
 import * as database from '../services/database'
 import {
@@ -322,101 +321,5 @@ export async function registerIpcHandlers(window: BrowserWindow): Promise<void> 
     }
   })
 
-  ipcMain.handle('app:getVersion', () => {
-    return app.getVersion()
-  })
-
-  ipcMain.handle('app:checkForUpdates', async () => {
-    const currentVersion = app.getVersion()
-    const owner = 'mengqi1436'
-    const repo = 'Ref7-Auto'
-    
-    return new Promise((resolve) => {
-      const options = {
-        hostname: 'api.github.com',
-        path: `/repos/${owner}/${repo}/releases/latest`,
-        method: 'GET',
-        headers: {
-          'User-Agent': 'REF7-Auto-Register',
-          'Accept': 'application/vnd.github.v3+json'
-        }
-      }
-
-      const req = https.request(options, (res) => {
-        let data = ''
-        
-        res.on('data', (chunk) => {
-          data += chunk
-        })
-        
-        res.on('end', () => {
-          try {
-            if (res.statusCode === 200) {
-              const release = JSON.parse(data)
-              const latestVersion = release.tag_name?.replace(/^v/, '') || ''
-              const hasUpdate = compareVersions(latestVersion, currentVersion) > 0
-              
-              resolve({
-                hasUpdate,
-                currentVersion,
-                latestVersion,
-                releaseUrl: release.html_url
-              })
-            } else if (res.statusCode === 404) {
-              resolve({
-                hasUpdate: false,
-                currentVersion,
-                latestVersion: currentVersion
-              })
-            } else {
-              resolve({
-                hasUpdate: false,
-                currentVersion,
-                error: `无法获取版本信息 (${res.statusCode})`
-              })
-            }
-          } catch {
-            resolve({
-              hasUpdate: false,
-              currentVersion,
-              error: '解析版本信息失败'
-            })
-          }
-        })
-      })
-
-      req.on('error', () => {
-        resolve({
-          hasUpdate: false,
-          currentVersion,
-          error: '网络连接失败'
-        })
-      })
-
-      req.setTimeout(10000, () => {
-        req.destroy()
-        resolve({
-          hasUpdate: false,
-          currentVersion,
-          error: '请求超时'
-        })
-      })
-
-      req.end()
-    })
-  })
-}
-
-function compareVersions(v1: string, v2: string): number {
-  const parts1 = v1.split('.').map(Number)
-  const parts2 = v2.split('.').map(Number)
-  
-  for (let i = 0; i < Math.max(parts1.length, parts2.length); i++) {
-    const p1 = parts1[i] || 0
-    const p2 = parts2[i] || 0
-    if (p1 > p2) return 1
-    if (p1 < p2) return -1
-  }
-  
-  return 0
+  ipcMain.handle('app:getVersion', () => app.getVersion())
 }
