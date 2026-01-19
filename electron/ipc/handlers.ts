@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow, dialog, shell } from 'electron'
+import { ipcMain, BrowserWindow, dialog, shell, app } from 'electron'
 import https from 'https'
 import fs from 'fs'
 import * as database from '../services/database'
@@ -322,8 +322,12 @@ export async function registerIpcHandlers(window: BrowserWindow): Promise<void> 
     }
   })
 
+  ipcMain.handle('app:getVersion', () => {
+    return app.getVersion()
+  })
+
   ipcMain.handle('app:checkForUpdates', async () => {
-    const currentVersion = '1.4.0'
+    const currentVersion = app.getVersion()
     const owner = 'mengqi1436'
     const repo = 'Ref7-Auto'
     

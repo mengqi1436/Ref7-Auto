@@ -134,4 +134,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     releaseUrl?: string
     error?: string
   }> => ipcRenderer.invoke('app:checkForUpdates'),
+  
+  getAppVersion: (): Promise<string> => ipcRenderer.invoke('app:getVersion'),
 })

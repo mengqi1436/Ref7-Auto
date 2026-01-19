@@ -53,6 +53,8 @@ export interface IElectronAPI {
     releaseUrl?: string
     error?: string
   }>
+
+  getAppVersion: () => Promise<string>
 }
 
 declare global {

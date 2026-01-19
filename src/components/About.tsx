@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { 
   User, Github, RefreshCw, ExternalLink, Zap
@@ -16,9 +16,14 @@ interface UpdateInfo {
 export default function About() {
   const [checking, setChecking] = useState(false)
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null)
-
-  const currentVersion = '1.4.0'
+  const [currentVersion, setCurrentVersion] = useState('--')
   const githubUrl = 'https://github.com/mengqi1436/Ref7-Auto'
+
+  useEffect(() => {
+    window.electronAPI?.getAppVersion?.().then((version) => {
+      if (version) setCurrentVersion(version)
+    })
+  }, [])
 
   const handleCheckUpdate = async () => {
     setChecking(true)

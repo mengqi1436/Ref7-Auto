@@ -67,6 +67,7 @@ interface ElectronAPI {
 
   openExternal: (url: string) => Promise<boolean>
   checkForUpdates: () => Promise<UpdateInfo>
+  getAppVersion: () => Promise<string>
 }
 
 declare global {
