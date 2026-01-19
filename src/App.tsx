@@ -30,6 +30,7 @@ function App() {
   const [defaultEmailType, setDefaultEmailType] = useState<EmailType>('tempmail_plus')
   const [notifications, setNotifications] = useState<NotificationItem[]>([])
   const [refAccountToRegister, setRefAccountToRegister] = useState<Account | null>(null)
+  const [appVersion, setAppVersion] = useState('1.0.0')
 
   const handleNavigate = useCallback((page: Page, emailType?: EmailType) => {
     if (emailType) setDefaultEmailType(emailType)
@@ -71,6 +72,9 @@ function App() {
       
       const stored = localStorage.getItem(THEME_KEY)
       if (stored === 'dark' || stored === 'light' || stored === 'system') setTheme(stored)
+
+      const version = await window.electronAPI?.getAppVersion?.()
+      if (version) setAppVersion(version)
     }
     init()
   }, [])
@@ -273,7 +277,7 @@ function App() {
           <span>账户总数: <span className="text-foreground font-bold font-numeric">{accounts.length}</span></span>
         </div>
         <div className="flex items-center gap-4 text-muted-foreground">
-          <span>v1.4.0</span>
+          <span>v{appVersion}</span>
           <span className="text-primary">REF7 Team</span>
         </div>
       </footer>
