@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, nativeTheme, Tray, Menu, nativeImage } from 'electron'
 import path from 'path'
 import { registerIpcHandlers } from './ipc/handlers'
+import { initAutoUpdater } from './services/updater'
 
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
@@ -103,6 +104,7 @@ app.whenReady().then(async () => {
   createWindow()
   createTray()
   await registerIpcHandlers(mainWindow!)
+  initAutoUpdater(mainWindow!)
 })
 
 app.on('window-all-closed', () => {

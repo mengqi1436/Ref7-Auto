@@ -136,4 +136,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
   }> => ipcRenderer.invoke('app:checkForUpdates'),
   
   getAppVersion: (): Promise<string> => ipcRenderer.invoke('app:getVersion'),
+
+  // 自动更新 API
+  updaterCheck: (): Promise<{ success: boolean; updateInfo?: unknown; error?: string }> => 
+    ipcRenderer.invoke('updater:check'),
+  updaterDownload: (): Promise<{ success: boolean; error?: string }> => 
+    ipcRenderer.invoke('updater:download'),
+  updaterInstall: (): void => { ipcRenderer.invoke('updater:install') },
+  onUpdaterStatus: (callback: (status: {
+    status: 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error'
+    info?: { version: string }
+    progress?: { percent: number; bytesPerSecond: number; transferred: number; total: number }
+    error?: string
+  }) => void): (() => void) => {
+    const handler = (_event: IpcRendererEvent, status: Parameters<typeof callback>[0]) => callback(status)
+    ipcRenderer.on('updater:status', handler)
+    return () => ipcRenderer.removeListener('updater:status', handler)
+  },
 })

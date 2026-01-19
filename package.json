@@ -1,6 +1,6 @@
 {
   "name": "ref7-auto-register",
-  "version": "1.4.6",
+  "version": "1.4.7",
   "description": "REF7 自动化注册管理软件",
   "main": "dist-electron/main.js",
   "scripts": {
@@ -17,6 +17,8 @@
   "author": "REF7",
   "license": "MIT",
   "dependencies": {
+    "electron-log": "^5.4.3",
+    "electron-updater": "^6.7.3",
     "framer-motion": "^12.26.2",
     "imap": "^0.8.19",
     "lucide-react": "^0.469.0",

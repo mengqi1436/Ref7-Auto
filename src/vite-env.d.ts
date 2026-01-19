@@ -68,6 +68,17 @@ interface ElectronAPI {
   openExternal: (url: string) => Promise<boolean>
   checkForUpdates: () => Promise<UpdateInfo>
   getAppVersion: () => Promise<string>
+
+  // 自动更新 API
+  updaterCheck: () => Promise<{ success: boolean; updateInfo?: unknown; error?: string }>
+  updaterDownload: () => Promise<{ success: boolean; error?: string }>
+  updaterInstall: () => void
+  onUpdaterStatus: (callback: (status: {
+    status: 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error'
+    info?: { version: string }
+    progress?: { percent: number; bytesPerSecond: number; transferred: number; total: number }
+    error?: string
+  }) => void) => () => void
 }
 
 declare global {
