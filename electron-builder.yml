@@ -89,9 +89,6 @@ nsis:
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: REF7 Auto Register
-  installerIcon: assets/icon.png
-  uninstallerIcon: assets/icon.png
-  installerHeaderIcon: assets/icon.png
   deleteAppDataOnUninstall: false
   differentialPackage: false
 
