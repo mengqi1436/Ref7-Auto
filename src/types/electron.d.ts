@@ -36,8 +36,8 @@ export interface IElectronAPI {
   getSettings: () => Promise<AppSettings>
   saveSettings: (settings: AppSettings) => Promise<void>
 
-  getSystemTheme: () => Promise<Theme>
-  onSystemThemeChange: (callback: (theme: Theme) => void) => () => void
+  getSystemTheme: () => Promise<'dark' | 'light'>
+  onSystemThemeChange: (callback: (theme: 'dark' | 'light') => void) => () => void
 
   minimizeWindow: () => void
   maximizeWindow: () => void

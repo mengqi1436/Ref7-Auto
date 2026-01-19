@@ -32,7 +32,6 @@ export default function RegisterPanel({
   const logsEndRef = useRef<HTMLDivElement>(null)
   const isRunningRef = useRef(false)
 
-  // Ref 注册模式
   const isRefMode = !!refAccountToRegister
 
   const maxBatchCount = settings?.registration.maxBatchCount ?? 20
@@ -155,7 +154,6 @@ export default function RegisterPanel({
         addLog('success', `Ref API 注册成功！`)
         if (result.refApiKey) {
           addLog('success', `API Key: ${result.refApiKey.slice(0, 12)}****`)
-          // 更新账户的 refApiKey
           setAccounts?.(prev => prev.map(acc => 
             acc.id === refAccountToRegister.id 
               ? { ...acc, refApiKey: result.refApiKey }
@@ -209,7 +207,6 @@ export default function RegisterPanel({
 
         <div className="space-y-5">
           {isRefMode ? (
-            /* Ref 注册模式 */
             <div className="rounded-2xl border border-accent/50 bg-card p-6 space-y-6">
               <div className="flex items-center justify-between">
                 <h3 className="font-semibold text-lg flex items-center gap-2">
@@ -270,7 +267,6 @@ export default function RegisterPanel({
               </div>
             </div>
           ) : (
-            /* 普通注册模式 */
             <div className="rounded-2xl border border-border/50 bg-card p-6 space-y-6">
               <h3 className="font-semibold text-lg flex items-center gap-2">
                 <Settings2 size={20} className="text-primary" />
@@ -360,7 +356,6 @@ export default function RegisterPanel({
           </div>
           )}
 
-          {/* 启动/停止按钮 */}
           {!isRegistering ? (
             <motion.button
               onClick={isRefMode ? handleStartRefRegistration : handleStart}
