@@ -101,6 +101,13 @@ export default function AccountList({ accounts, setAccounts, onRefreshAccount }:
     message: string
     details?: string
   }>({ isOpen: false, success: false, message: '' })
+  const [refCreditsByAccount, setRefCreditsByAccount] = useState<
+    Record<number, { credits: number | null; error?: string }>
+  >({})
+  const [ctx7RequestsByAccount, setCtx7RequestsByAccount] = useState<
+    Record<number, { used: number | null; limit: number | null; error?: string }>
+  >({})
+  const [usageRefreshLoading, setUsageRefreshLoading] = useState(false)
 
   const itemsPerPage = 10
 
@@ -121,6 +128,67 @@ export default function AccountList({ accounts, setAccounts, onRefreshAccount }:
       setCurrentPage(totalPages)
     }
   }, [currentPage, totalPages])
+
+  const handleUsageRefreshAll = useCallback(async () => {
+    const api = window.electronAPI
+    if (!api || usageRefreshLoading) return
+    const needRef = accounts.some(a => a.refApiKey)
+    const needCtx7 = accounts.some(a => a.apiKey)
+    if (!needRef && !needCtx7) return
+    setUsageRefreshLoading(true)
+    try {
+      const tasks: Promise<void>[] = []
+      if (needRef && api.fetchRefCreditsAll) {
+        tasks.push(
+          api.fetchRefCreditsAll().then(({ results, error }) => {
+            if (error) {
+              setRefCreditsByAccount(prev => {
+                const next = { ...prev }
+                for (const a of accounts) {
+                  if (a.refApiKey) next[a.id] = { credits: null, error }
+                }
+                return next
+              })
+              return
+            }
+            setRefCreditsByAccount(prev => {
+              const next = { ...prev }
+              for (const [idStr, r] of Object.entries(results)) {
+                next[Number(idStr)] = { credits: r.credits, error: r.error }
+              }
+              return next
+            })
+          })
+        )
+      }
+      if (needCtx7 && api.fetchContext7RequestsAll) {
+        tasks.push(
+          api.fetchContext7RequestsAll().then(({ results, error }) => {
+            if (error) {
+              setCtx7RequestsByAccount(prev => {
+                const next = { ...prev }
+                for (const a of accounts) {
+                  if (a.apiKey) next[a.id] = { used: null, limit: null, error }
+                }
+                return next
+              })
+              return
+            }
+            setCtx7RequestsByAccount(prev => {
+              const next = { ...prev }
+              for (const [idStr, r] of Object.entries(results)) {
+                next[Number(idStr)] = { used: r.used, limit: r.limit, error: r.error }
+              }
+              return next
+            })
+          })
+        )
+      }
+      await Promise.all(tasks)
+    } finally {
+      setUsageRefreshLoading(false)
+    }
+  }, [accounts, usageRefreshLoading])
 
   const toggleSelectAll = useCallback(() => {
     setSelectedIds(prev => 
@@ -215,13 +283,6 @@ export default function AccountList({ accounts, setAccounts, onRefreshAccount }:
     }
   }, [setAccounts])
 
-  const formatEmail = useCallback((email: string) => {
-    if (email.length <= 10) return email
-    const [local, domain] = email.split('@')
-    if (!domain || local.length <= 4) return email
-    return `${local.slice(0, 4)}****@${domain}`
-  }, [])
-
   const paginationText = useMemo(() => {
     if (filteredAccounts.length === 0) return '暂无数据'
     const start = (currentPage - 1) * itemsPerPage + 1
@@ -261,6 +322,21 @@ export default function AccountList({ accounts, setAccounts, onRefreshAccount }:
           >
             <Download size={18} />
             导出
+          </motion.button>
+
+          <motion.button
+            type="button"
+            onClick={() => { void handleUsageRefreshAll() }}
+            disabled={
+              usageRefreshLoading ||
+              (!accounts.some(a => a.refApiKey) && !accounts.some(a => a.apiKey))
+            }
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl border border-border/50 bg-background hover:bg-secondary transition-colors text-base font-medium disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+          >
+            <RefreshCw size={18} className={usageRefreshLoading ? 'animate-spin' : ''} />
+            刷新
           </motion.button>
           
           <motion.button 
@@ -310,8 +386,7 @@ export default function AccountList({ accounts, setAccounts, onRefreshAccount }:
                     className="w-5 h-5 rounded border-border text-primary focus:ring-primary cursor-pointer"
                   />
                 </th>
-                <th className="px-4 py-4 text-center">邮箱账户</th>
-                <th className="px-4 py-4 text-center">密码</th>
+                <th className="px-4 py-4 text-center">邮箱 / 密码</th>
                 <th className="px-4 py-4 text-center">context7 API</th>
                 <th className="px-4 py-4 text-center">Ref API</th>
                 <th className="px-4 py-4 text-center whitespace-nowrap">注册时间</th>
@@ -321,7 +396,7 @@ export default function AccountList({ accounts, setAccounts, onRefreshAccount }:
             <tbody className="divide-y divide-border/50">
               {paginatedAccounts.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-6 py-16 text-center text-muted-foreground text-lg">
+                  <td colSpan={6} className="px-6 py-16 text-center text-muted-foreground text-lg">
                     {searchTerm ? '未找到匹配的账户' : '暂无账户数据'}
                   </td>
                 </tr>
@@ -344,55 +419,79 @@ export default function AccountList({ accounts, setAccounts, onRefreshAccount }:
                         className="w-5 h-5 rounded border-border text-primary focus:ring-primary cursor-pointer"
                       />
                     </td>
-                    <td className="px-4 py-4 font-medium font-mono text-center" title={account.email}>
-                      {formatEmail(account.email)}
-                    </td>
-                    <td className="px-4 py-4 text-center">
-                      <div className="inline-flex items-center gap-1.5">
-                        <span className="font-mono text-muted-foreground">
-                          {showPasswords[account.id] ? account.password : '••••••••'}
+                    <td className="px-4 py-4 text-center max-w-[220px]">
+                      <div className="flex flex-col items-center gap-1.5">
+                        <span
+                          className="font-medium font-mono text-sm break-all leading-snug"
+                          title={account.email}
+                        >
+                          {account.email}
                         </span>
-                        <button
-                          onClick={() => togglePassword(account.id)}
-                          className="p-1 hover:bg-secondary rounded text-muted-foreground transition-colors cursor-pointer"
-                        >
-                          {showPasswords[account.id] ? <EyeOff size={14} /> : <Eye size={14} />}
-                        </button>
-                        <motion.button
-                          onClick={() => handleCopy(account, 'password')}
-                          whileHover={{ scale: 1.1 }}
-                          whileTap={{ scale: 0.9 }}
-                          className="p-1 hover:bg-secondary rounded transition-colors cursor-pointer"
-                          title="复制密码"
-                        >
-                          {copiedField?.id === account.id && copiedField.field === 'password' ? (
-                            <Check size={14} className="text-emerald-500" />
-                          ) : (
-                            <Copy size={14} className="text-muted-foreground" />
-                          )}
-                        </motion.button>
-                      </div>
-                    </td>
-                    <td className="px-4 py-4 text-center">
-                      {account.apiKey ? (
                         <div className="inline-flex items-center gap-1.5">
-                          <Key size={14} className="text-emerald-500 shrink-0" />
                           <span className="font-mono text-sm text-muted-foreground">
-                            {account.apiKey.slice(0, 3)}****{account.apiKey.slice(-3)}
+                            {showPasswords[account.id] ? account.password : '••••••••'}
                           </span>
+                          <button
+                            type="button"
+                            onClick={() => togglePassword(account.id)}
+                            className="p-1 hover:bg-secondary rounded text-muted-foreground transition-colors cursor-pointer"
+                          >
+                            {showPasswords[account.id] ? <EyeOff size={14} /> : <Eye size={14} />}
+                          </button>
                           <motion.button
-                            onClick={() => handleCopy(account, 'apiKey')}
+                            type="button"
+                            onClick={() => handleCopy(account, 'password')}
                             whileHover={{ scale: 1.1 }}
                             whileTap={{ scale: 0.9 }}
                             className="p-1 hover:bg-secondary rounded transition-colors cursor-pointer"
-                            title="复制 API Key"
+                            title="复制密码"
                           >
-                            {copiedField?.id === account.id && copiedField.field === 'apiKey' ? (
+                            {copiedField?.id === account.id && copiedField.field === 'password' ? (
                               <Check size={14} className="text-emerald-500" />
                             ) : (
                               <Copy size={14} className="text-muted-foreground" />
                             )}
                           </motion.button>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-4 py-4 text-center">
+                      {account.apiKey ? (
+                        <div className="flex flex-col items-center gap-1">
+                          <div className="inline-flex items-center gap-1.5">
+                            <Key size={14} className="text-emerald-500 shrink-0" />
+                            <span className="font-mono text-sm text-muted-foreground">
+                              {account.apiKey.slice(0, 3)}****{account.apiKey.slice(-3)}
+                            </span>
+                            <motion.button
+                              onClick={() => handleCopy(account, 'apiKey')}
+                              whileHover={{ scale: 1.1 }}
+                              whileTap={{ scale: 0.9 }}
+                              className="p-1 hover:bg-secondary rounded transition-colors cursor-pointer"
+                              title="复制 API Key"
+                            >
+                              {copiedField?.id === account.id && copiedField.field === 'apiKey' ? (
+                                <Check size={14} className="text-emerald-500" />
+                              ) : (
+                                <Copy size={14} className="text-muted-foreground" />
+                              )}
+                            </motion.button>
+                          </div>
+                          <span className="text-xs text-muted-foreground tabular-nums">
+                            Requests:{' '}
+                            {ctx7RequestsByAccount[account.id]?.used != null &&
+                            ctx7RequestsByAccount[account.id]?.limit != null
+                              ? `${ctx7RequestsByAccount[account.id]!.used!.toLocaleString('en-US')} / ${ctx7RequestsByAccount[account.id]!.limit!.toLocaleString('en-US')}`
+                              : '—'}
+                          </span>
+                          {ctx7RequestsByAccount[account.id]?.error ? (
+                            <span
+                              className="text-xs text-amber-600 dark:text-amber-500 max-w-[160px] leading-tight"
+                              title={ctx7RequestsByAccount[account.id]?.error}
+                            >
+                              {ctx7RequestsByAccount[account.id]?.error}
+                            </span>
+                          ) : null}
                         </div>
                       ) : (
                         <span className="text-muted-foreground/50 text-sm">-</span>
@@ -400,24 +499,39 @@ export default function AccountList({ accounts, setAccounts, onRefreshAccount }:
                     </td>
                     <td className="px-4 py-4 text-center">
                       {account.refApiKey ? (
-                        <div className="inline-flex items-center gap-1.5">
-                          <Key size={14} className="text-emerald-500 shrink-0" />
-                          <span className="font-mono text-sm text-muted-foreground">
-                            {account.refApiKey.slice(0, 3)}****{account.refApiKey.slice(-3)}
+                        <div className="flex flex-col items-center gap-1">
+                          <div className="inline-flex items-center gap-1.5">
+                            <Key size={14} className="text-emerald-500 shrink-0" />
+                            <span className="font-mono text-sm text-muted-foreground">
+                              {account.refApiKey.slice(0, 3)}****{account.refApiKey.slice(-3)}
+                            </span>
+                            <motion.button
+                              type="button"
+                              onClick={() => handleCopy(account, 'refApiKey')}
+                              whileHover={{ scale: 1.1 }}
+                              whileTap={{ scale: 0.9 }}
+                              className="p-1 hover:bg-secondary rounded transition-colors cursor-pointer"
+                              title="复制 Ref API"
+                            >
+                              {copiedField?.id === account.id && copiedField.field === 'refApiKey' ? (
+                                <Check size={14} className="text-emerald-500" />
+                              ) : (
+                                <Copy size={14} className="text-muted-foreground" />
+                              )}
+                            </motion.button>
+                          </div>
+                          <span className="text-xs text-muted-foreground tabular-nums">
+                            Available Credits:{' '}
+                            {refCreditsByAccount[account.id]?.credits ?? '—'}
                           </span>
-                          <motion.button
-                            onClick={() => handleCopy(account, 'refApiKey')}
-                            whileHover={{ scale: 1.1 }}
-                            whileTap={{ scale: 0.9 }}
-                            className="p-1 hover:bg-secondary rounded transition-colors cursor-pointer"
-                            title="复制 Ref API"
-                          >
-                            {copiedField?.id === account.id && copiedField.field === 'refApiKey' ? (
-                              <Check size={14} className="text-emerald-500" />
-                            ) : (
-                              <Copy size={14} className="text-muted-foreground" />
-                            )}
-                          </motion.button>
+                          {refCreditsByAccount[account.id]?.error ? (
+                            <span
+                              className="text-xs text-amber-600 dark:text-amber-500 max-w-[160px] leading-tight"
+                              title={refCreditsByAccount[account.id]?.error}
+                            >
+                              {refCreditsByAccount[account.id]?.error}
+                            </span>
+                          ) : null}
                         </div>
                       ) : (
                         <span className="text-muted-foreground/50 text-sm">-</span>

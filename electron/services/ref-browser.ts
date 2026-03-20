@@ -11,7 +11,7 @@ interface RefBrowserOptions {
   onLog: (type: LogType, message: string) => void
 }
 
-interface RefRegistrationData {
+export interface RefRegistrationData {
   email: string
   password: string
 }
@@ -20,7 +20,7 @@ interface PuppeteerBrowser {
   close(): Promise<void>
 }
 
-interface PuppeteerPage {
+export interface RefPuppeteerPage {
   setViewport(viewport: { width: number; height: number }): Promise<void>
   goto(url: string, options?: { waitUntil?: string; timeout?: number }): Promise<unknown>
   waitForSelector(selector: string, options?: { timeout?: number }): Promise<unknown>
@@ -43,16 +43,31 @@ export interface RefApiKeyResult {
 }
 
 let refBrowser: PuppeteerBrowser | null = null
-let refPage: PuppeteerPage | null = null
+let refPage: RefPuppeteerPage | null = null
 let isRefRunning = false
 
-const REF_URLS = {
+export const REF_URLS = {
   signup: 'https://ref.tools/signup',
   login: 'https://ref.tools/login',
+  account: 'https://ref.tools/account',
   keys: 'https://ref.tools/keys'
 } as const
 
-const BROWSER_ARGS = [
+const REF_VERIFICATION_EMAIL_PRIMARY = 'send verification email'
+
+const REF_VERIFICATION_EMAIL_FALLBACK_PHRASES = [
+  'send verification',
+  'resend verification email',
+  'resend verification',
+  'verify your email',
+  'email verification',
+  '发送验证邮件',
+  '重新发送验证邮件',
+  '重新发送验证',
+  '重新发送'
+] as const
+
+export const REF_BROWSER_ARGS = [
   '--disable-blink-features=AutomationControlled',
   '--disable-features=IsolateOrigins,site-per-process',
   '--no-first-run',
@@ -67,7 +82,7 @@ const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 const getErrorMessage = (error: unknown): string => 
   error instanceof Error ? error.message : '未知错误'
 
-async function hideChrome(): Promise<void> {
+export async function hideRefChromeWindow(): Promise<void> {
   if (process.platform !== 'win32') return
   try {
     await execAsync(`powershell -ExecutionPolicy Bypass -Command "
@@ -86,66 +101,164 @@ async function hideChrome(): Promise<void> {
   } catch {}
 }
 
-async function fillInput(selector: string, value: string, errorMsg: string): Promise<void> {
-  if (!refPage) throw new Error('浏览器未初始化')
-  const input = await refPage.$(selector)
+export async function refPageFillInput(
+  page: RefPuppeteerPage,
+  selector: string,
+  value: string,
+  errorMsg: string
+): Promise<void> {
+  const input = await page.$(selector)
   if (!input) throw new Error(errorMsg)
   await input.click()
   await input.type(value)
 }
 
-async function clickButtonByText(text: string): Promise<boolean> {
-  if (!refPage) return false
-  return refPage.evaluate((targetText: string) => {
+export async function refPageClickButtonByText(page: RefPuppeteerPage, text: string): Promise<boolean> {
+  return page.evaluate((targetText: string) => {
     const btn = Array.from(document.querySelectorAll('button'))
       .find(b => b.textContent?.trim() === targetText)
-    if (btn) { btn.click(); return true }
+    if (btn) {
+      btn.click()
+      return true
+    }
     return false
   }, text)
 }
 
+export async function refPageGetHref(page: RefPuppeteerPage): Promise<string> {
+  return page.evaluate(() => window.location.href)
+}
+
+export async function refPageGetInnerText(page: RefPuppeteerPage): Promise<string> {
+  return page.evaluate(() => document.body.innerText)
+}
+
+export async function refPagePerformEmailLogin(
+  page: RefPuppeteerPage,
+  data: RefRegistrationData,
+  onLog: RefBrowserOptions['onLog']
+): Promise<boolean> {
+  try {
+    onLog('info', '打开登录页面...')
+    await page.goto(REF_URLS.login, { waitUntil: 'networkidle2', timeout: 30000 })
+    await delay(1000)
+
+    onLog('info', '填写登录信息...')
+    await refPageFillInput(page, 'input[placeholder="Enter your email"]', data.email, '未找到邮箱输入框')
+    await refPageFillInput(page, 'input[placeholder="Enter your password"]', data.password, '未找到密码输入框')
+
+    onLog('info', '点击登录按钮...')
+    const clicked = await refPageClickButtonByText(page, 'Sign in with Email')
+
+    if (!clicked) {
+      onLog('warning', '未找到登录按钮，尝试提交表单...')
+      await page.evaluate(() => document.querySelector('form')?.submit())
+    }
+
+    await delay(3000)
+    await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {})
+
+    const url = await refPageGetHref(page)
+    if (url.includes('/dashboard') || url.includes('/keys') || url.includes('/account')) {
+      onLog('success', '登录成功')
+      return true
+    }
+
+    onLog('warning', '登录状态未知')
+    return true
+  } catch (error: unknown) {
+    onLog('error', `登录失败: ${getErrorMessage(error)}`)
+    return false
+  }
+}
+
+export async function refPageReadAvailableCredits(page: RefPuppeteerPage): Promise<number | null> {
+  return page.evaluate(() => {
+    const candidates = Array.from(
+      document.body.querySelectorAll('h1,h2,h3,h4,h5,h6,p,span,div')
+    )
+    for (const el of candidates) {
+      const t = el.textContent?.trim() || ''
+      if (t === 'Available Credits' || /^Available Credits$/i.test(t)) {
+        let n: Element | null = el.nextElementSibling
+        for (let g = 0; n && g < 8; g++) {
+          const m = n.textContent?.match(/\b(\d{1,9})\b/)
+          if (m) return parseInt(m[1], 10)
+          n = n.nextElementSibling
+        }
+        const parent = el.parentElement
+        if (parent) {
+          const m2 = parent.innerText.match(/Available\s+Credits[\s\n]+(\d{1,9})\b/i)
+          if (m2) return parseInt(m2[1], 10)
+        }
+      }
+    }
+    const body = document.body?.innerText || ''
+    const m3 = body.match(/Available\s+Credits[\s\n]+(\d{1,9})\b/i)
+    return m3 ? parseInt(m3[1], 10) : null
+  })
+}
+
+export function createRefRealBrowserConnectOptions(config: {
+  userDataDir?: string
+  headless: boolean
+}): Parameters<typeof connect>[0] {
+  const args = config.headless
+    ? [...REF_BROWSER_ARGS, '--window-position=-3000,-3000']
+    : [...REF_BROWSER_ARGS, '--start-maximized']
+  const customConfig = config.userDataDir ? { userDataDir: config.userDataDir } : {}
+  return {
+    headless: false,
+    args,
+    customConfig,
+    turnstile: true,
+    fingerprint: true,
+    connectOption: { defaultViewport: null },
+    disableXvfb: false,
+    ignoreAllFlags: false
+  } as Parameters<typeof connect>[0]
+}
+
+async function fillInput(selector: string, value: string, errorMsg: string): Promise<void> {
+  if (!refPage) throw new Error('浏览器未初始化')
+  await refPageFillInput(refPage, selector, value, errorMsg)
+}
+
+async function clickButtonByText(text: string): Promise<boolean> {
+  if (!refPage) return false
+  return refPageClickButtonByText(refPage, text)
+}
+
 async function getCurrentUrl(): Promise<string> {
   if (!refPage) return ''
-  return refPage.evaluate(() => window.location.href)
+  return refPageGetHref(refPage)
 }
 
 async function getPageText(): Promise<string> {
   if (!refPage) return ''
-  return refPage.evaluate(() => document.body.innerText)
+  return refPageGetInnerText(refPage)
 }
 
 export async function initRefBrowser(options: RefBrowserOptions): Promise<void> {
   if (refBrowser) await closeRefBrowser()
 
   const useHidden = options.headless
-  const args = useHidden
-    ? [...BROWSER_ARGS, '--window-position=-3000,-3000']
-    : [...BROWSER_ARGS, '--start-maximized']
 
   options.onLog('info', `启动 Ref 浏览器 (${useHidden ? '后台' : '可见'})...`)
 
-  const response = await connect({
-    headless: false,
-    args,
-    customConfig: {},
-    turnstile: true,
-    fingerprint: true,
-    connectOption: { defaultViewport: null },
-    disableXvfb: false,
-    ignoreAllFlags: false
-  } as Parameters<typeof connect>[0])
+  const response = await connect(createRefRealBrowserConnectOptions({ headless: useHidden }))
 
   refBrowser = response.browser as PuppeteerBrowser
-  refPage = response.page as PuppeteerPage
+  refPage = response.page as RefPuppeteerPage
 
   await refPage.setViewport({ width: 1920, height: 1080 })
   await refPage.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' })
 
   if (useHidden) {
     await delay(1500)
-    await hideChrome()
+    await hideRefChromeWindow()
     await delay(500)
-    await hideChrome()
+    await hideRefChromeWindow()
   }
 
   isRefRunning = true
@@ -204,52 +317,99 @@ export async function registerRefAccount(data: RefRegistrationData, options: Ref
 
 async function loginRefAccount(data: RefRegistrationData, options: RefBrowserOptions): Promise<boolean> {
   if (!refPage) throw new Error('浏览器未初始化')
+  return refPagePerformEmailLogin(refPage, data, options.onLog)
+}
 
-  try {
-    options.onLog('info', '打开登录页面...')
-    await refPage.goto(REF_URLS.login, { waitUntil: 'networkidle2', timeout: 30000 })
-    await delay(1000)
-
-    options.onLog('info', '填写登录信息...')
-    await fillInput('input[placeholder="Enter your email"]', data.email, '未找到邮箱输入框')
-    await fillInput('input[placeholder="Enter your password"]', data.password, '未找到密码输入框')
-
-    options.onLog('info', '点击登录按钮...')
-    const clicked = await clickButtonByText('Sign in with Email')
-
-    if (!clicked) {
-      options.onLog('warning', '未找到登录按钮，尝试提交表单...')
-      await refPage.evaluate(() => document.querySelector('form')?.submit())
-    }
-
-    await delay(3000)
-    await refPage.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {})
-
-    const url = await getCurrentUrl()
-    if (url.includes('/dashboard') || url.includes('/keys') || url.includes('/account')) {
-      options.onLog('success', '登录成功')
-      return true
-    }
-
-    options.onLog('warning', '登录状态未知')
-    return true
-  } catch (error: unknown) {
-    options.onLog('error', `登录失败: ${getErrorMessage(error)}`)
-    return false
+async function waitForRefVerificationUi(timeoutMs: number): Promise<boolean> {
+  if (!refPage) return false
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const seen = await refPage.evaluate(() => {
+      const body = document.body?.innerText || ''
+      return /send verification|you must verify|verify your email|验证|重新发送/i.test(body)
+    })
+    if (seen) return true
+    await delay(400)
   }
+  return false
 }
 
 export async function sendRefVerificationEmail(options: RefBrowserOptions): Promise<boolean> {
   if (!refPage || !isRefRunning) throw new Error('浏览器未初始化')
 
   try {
-    options.onLog('info', '发送验证邮件...')
-    const clicked = await refPage.evaluate(() => {
-      const btn = Array.from(document.querySelectorAll('button'))
-        .find(b => b.textContent?.includes('Send Verification Email'))
-      if (btn) { btn.click(); return true }
-      return false
-    })
+    options.onLog('info', '发送验证邮件（优先匹配 Send Verification Email）...')
+    const primary = REF_VERIFICATION_EMAIL_PRIMARY
+    const fallbacks = [...REF_VERIFICATION_EMAIL_FALLBACK_PHRASES]
+
+    const uiReady = await waitForRefVerificationUi(35000)
+    if (!uiReady) {
+      options.onLog('info', '未检测到验证提示文案，尝试进入账户页...')
+      await refPage.goto(REF_URLS.account, { waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {})
+      await delay(1200)
+    }
+
+    const tryClick = async (): Promise<boolean> => {
+      return refPage!.evaluate((arg: { primary: string; fallbacks: string[] }) => {
+        const norm = (s: string) => s.replace(/\s+/g, ' ').trim().toLowerCase()
+        const isVisible = (el: HTMLElement) => {
+          const s = window.getComputedStyle(el)
+          if (s.display === 'none' || s.visibility === 'hidden' || parseFloat(s.opacity || '1') === 0) {
+            return false
+          }
+          const r = el.getBoundingClientRect()
+          return r.width > 0 && r.height > 0
+        }
+        const isDisabled = (el: Element) => {
+          if (el instanceof HTMLButtonElement || el instanceof HTMLInputElement) return el.disabled
+          return el.getAttribute('aria-disabled') === 'true'
+        }
+        const clickEl = (el: Element) => {
+          if (!(el instanceof HTMLElement)) return false
+          if (isDisabled(el)) return false
+          if (!isVisible(el)) return false
+          el.scrollIntoView({ block: 'center', inline: 'nearest' })
+          el.click()
+          return true
+        }
+        const rawFor = (el: Element): string => {
+          if (el instanceof HTMLInputElement && (el.type === 'submit' || el.type === 'button')) {
+            return `${el.value} ${el.getAttribute('aria-label') || ''}`
+          }
+          return `${el.textContent || ''} ${el.getAttribute('aria-label') || ''}`
+        }
+        const tryPass = (phrases: string[]): boolean => {
+          const sel = 'button, [role="button"], input[type="submit"], input[type="button"]'
+          for (const el of Array.from(document.querySelectorAll(sel))) {
+            const t = norm(rawFor(el))
+            if (phrases.some(p => t.includes(p)) && clickEl(el)) return true
+          }
+          for (const a of Array.from(document.querySelectorAll('a[href]'))) {
+            const t = norm(rawFor(a))
+            if (phrases.some(p => t.includes(p)) && clickEl(a)) return true
+          }
+          return false
+        }
+        if (tryPass([arg.primary])) return true
+        if (arg.fallbacks.length && tryPass(arg.fallbacks)) return true
+        return false
+      }, { primary, fallbacks })
+    }
+
+    const maxAttempts = 32
+    let navigatedToAccount = false
+    let clicked = false
+    for (let i = 0; i < maxAttempts; i++) {
+      clicked = await tryClick()
+      if (clicked) break
+      if (i >= 12 && !navigatedToAccount) {
+        navigatedToAccount = true
+        options.onLog('info', '仍在等待发送按钮，打开账户页重试...')
+        await refPage.goto(REF_URLS.account, { waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {})
+        await delay(1200)
+      }
+      await delay(1000)
+    }
 
     if (!clicked) {
       options.onLog('warning', '未找到发送验证邮件按钮')

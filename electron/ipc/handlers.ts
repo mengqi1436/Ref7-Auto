@@ -17,8 +17,14 @@ import {
   sendRefVerificationEmail,
   clickRefVerificationLink,
   getRefApiKey,
-  closeRefBrowser
+  closeRefBrowser,
+  isRefRegistrationRunning
 } from '../services/ref-browser'
+import { fetchRefAccountCredits, fetchAllRefCreditsSequential } from '../services/ref-credits'
+import {
+  fetchContext7AccountRequests,
+  fetchAllContext7RequestsSequential
+} from '../services/context7-requests'
 import { TempMailPlusService } from '../services/email/tempmailplus'
 import { ImapMailService } from '../services/email/imap'
 import type { AccountStatus, EmailType } from '../services/database'
@@ -59,6 +65,18 @@ const ALL_CHARS = UPPERCASE + LOWERCASE + NUMBERS + SYMBOLS
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 const randomInt = (min: number, max: number) => Math.floor(Math.random() * (max - min + 1)) + min
 const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : '未知错误'
+
+/** 所有注册 IPC（Context7 批量 / Ref）共用一条队列，严格按调用顺序串行执行 */
+let registrationQueueTail: Promise<void> = Promise.resolve()
+
+function enqueueRegistrationTask<T>(task: () => Promise<T>): Promise<T> {
+  const run = registrationQueueTail.then(() => task())
+  registrationQueueTail = run.then(
+    () => undefined,
+    () => undefined
+  )
+  return run
+}
 
 function generateRandomEmail(domain: string): string {
   const username = Array.from({ length: 6 }, () => CHARS.charAt(Math.floor(Math.random() * CHARS.length))).join('')
@@ -251,7 +269,10 @@ async function handleRefRegistration(config: RefRegistrationConfig): Promise<Ref
       return { success: false, error: 'Ref 注册失败' }
     }
 
-    await sendRefVerificationEmail(opts)
+    if (!await sendRefVerificationEmail(opts)) {
+      await closeRefBrowser()
+      return { success: false, error: '发送验证邮件失败' }
+    }
     await delay(5000)
 
     const verificationLink = await getRefVerificationLink(settings, config.email)
@@ -291,6 +312,48 @@ export async function registerIpcHandlers(window: BrowserWindow): Promise<void> 
     database.updateAccountStatus(id, status))
   ipcMain.handle('accounts:updateRefApiKey', (_, id: number, refApiKey: string) =>
     database.updateAccountRefApiKey(id, refApiKey))
+
+  ipcMain.handle('accounts:fetchRefCredits', async (_, accountId: number) => {
+    if (isRefRegistrationRunning()) {
+      return { credits: null as number | null, error: 'Ref 注册进行中' }
+    }
+    const acc = database.getAllAccounts().find(a => a.id === accountId)
+    if (!acc) return { credits: null as number | null, error: '账户不存在' }
+    if (!acc.refApiKey) return { credits: null as number | null, error: '未绑定 Ref API' }
+    return fetchRefAccountCredits({ email: acc.email, password: acc.password })
+  })
+
+  ipcMain.handle('accounts:fetchRefCreditsAll', async () => {
+    if (isRefRegistrationRunning()) {
+      return { results: {}, error: 'Ref 注册进行中' }
+    }
+    const withRef = database.getAllAccounts().filter(a => a.refApiKey)
+    const results = await fetchAllRefCreditsSequential(
+      withRef.map(a => ({ id: a.id, email: a.email, password: a.password }))
+    )
+    return { results }
+  })
+
+  ipcMain.handle('accounts:fetchContext7Requests', async (_, accountId: number) => {
+    if (isRegistrationRunning()) {
+      return { used: null as number | null, limit: null as number | null, error: 'Context7 注册进行中' }
+    }
+    const acc = database.getAllAccounts().find(a => a.id === accountId)
+    if (!acc) return { used: null as number | null, limit: null as number | null, error: '账户不存在' }
+    if (!acc.apiKey) return { used: null as number | null, limit: null as number | null, error: '未绑定 context7 API' }
+    return fetchContext7AccountRequests({ email: acc.email, password: acc.password })
+  })
+
+  ipcMain.handle('accounts:fetchContext7RequestsAll', async () => {
+    if (isRegistrationRunning()) {
+      return { results: {}, error: 'Context7 注册进行中' }
+    }
+    const withCtx = database.getAllAccounts().filter(a => a.apiKey)
+    const results = await fetchAllContext7RequestsSequential(
+      withCtx.map(a => ({ id: a.id, email: a.email, password: a.password }))
+    )
+    return { results }
+  })
 
   ipcMain.handle('accounts:export', async () => {
     const content = database.exportAccounts()
@@ -338,8 +401,10 @@ export async function registerIpcHandlers(window: BrowserWindow): Promise<void> 
     catch { return false }
   })
 
-  ipcMain.handle('register:start', (_, config: RegistrationConfig) => handleRegistration(config))
-  ipcMain.handle('register:startRef', (_, config: RefRegistrationConfig) => handleRefRegistration(config))
+  ipcMain.handle('register:start', (_, config: RegistrationConfig) =>
+    enqueueRegistrationTask(() => handleRegistration(config)))
+  ipcMain.handle('register:startRef', (_, config: RefRegistrationConfig) =>
+    enqueueRegistrationTask(() => handleRefRegistration(config)))
   ipcMain.handle('register:stop', async () => { stopRegistration(); await closeBrowser() })
   ipcMain.handle('shell:openExternal', async (_, url: string) => {
     try { await shell.openExternal(url); return true }

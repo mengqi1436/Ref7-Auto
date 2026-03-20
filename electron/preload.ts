@@ -40,6 +40,27 @@ interface RefRegistrationResult {
   error?: string
 }
 
+interface RefCreditsFetchResult {
+  credits: number | null
+  error?: string
+}
+
+interface RefCreditsAllResponse {
+  results: Record<number, RefCreditsFetchResult>
+  error?: string
+}
+
+interface Context7RequestsFetchResult {
+  used: number | null
+  limit: number | null
+  error?: string
+}
+
+interface Context7RequestsAllResponse {
+  results: Record<number, Context7RequestsFetchResult>
+  error?: string
+}
+
 interface TempMailPlusConfig {
   username: string
   epin: string
@@ -91,6 +112,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('accounts:updateStatus', id, status),
   updateAccountRefApiKey: (id: number, refApiKey: string): Promise<void> =>
     ipcRenderer.invoke('accounts:updateRefApiKey', id, refApiKey),
+  fetchRefCredits: (accountId: number): Promise<RefCreditsFetchResult> =>
+    ipcRenderer.invoke('accounts:fetchRefCredits', accountId),
+  fetchRefCreditsAll: (): Promise<RefCreditsAllResponse> =>
+    ipcRenderer.invoke('accounts:fetchRefCreditsAll'),
+  fetchContext7Requests: (accountId: number): Promise<Context7RequestsFetchResult> =>
+    ipcRenderer.invoke('accounts:fetchContext7Requests', accountId),
+  fetchContext7RequestsAll: (): Promise<Context7RequestsAllResponse> =>
+    ipcRenderer.invoke('accounts:fetchContext7RequestsAll'),
   exportAccounts: (): Promise<string | null> => ipcRenderer.invoke('accounts:export'),
   importAccounts: (): Promise<{
     total?: number

@@ -6,6 +6,10 @@ import type {
   RegistrationConfig,
   RefRegistrationConfig,
   RefRegistrationResult,
+  RefCreditsFetchResult,
+  RefCreditsAllResponse,
+  Context7RequestsFetchResult,
+  Context7RequestsAllResponse,
   TempMailPlusConfig,
   ImapMailConfig,
   Theme,
@@ -18,6 +22,10 @@ export interface IElectronAPI {
   deleteAccounts: (ids: number[]) => Promise<void>
   updateAccountStatus: (id: number, status: AccountStatus) => Promise<void>
   updateAccountRefApiKey: (id: number, refApiKey: string) => Promise<void>
+  fetchRefCredits: (accountId: number) => Promise<RefCreditsFetchResult>
+  fetchRefCreditsAll: () => Promise<RefCreditsAllResponse>
+  fetchContext7Requests: (accountId: number) => Promise<Context7RequestsFetchResult>
+  fetchContext7RequestsAll: () => Promise<Context7RequestsAllResponse>
   exportAccounts: () => Promise<string | null>
   importAccounts: () => Promise<{
     total?: number

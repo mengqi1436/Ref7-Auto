@@ -37,6 +37,27 @@ export interface RefRegistrationResult {
   error?: string
 }
 
+export interface RefCreditsFetchResult {
+  credits: number | null
+  error?: string
+}
+
+export interface RefCreditsAllResponse {
+  results: Record<number, RefCreditsFetchResult>
+  error?: string
+}
+
+export interface Context7RequestsFetchResult {
+  used: number | null
+  limit: number | null
+  error?: string
+}
+
+export interface Context7RequestsAllResponse {
+  results: Record<number, Context7RequestsFetchResult>
+  error?: string
+}
+
 export interface TempMailPlusConfig {
   username: string
   epin: string
