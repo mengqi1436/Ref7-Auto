@@ -267,9 +267,11 @@ export async function fetchRefAccountCredits(data: RefRegistrationData): Promise
 export async function fetchAllRefCreditsSequential(
   accounts: { id: number; email: string; password: string }[]
 ): Promise<Record<number, RefCreditsResult>> {
-  const out: Record<number, RefCreditsResult> = {}
-  for (const a of accounts) {
-    out[a.id] = await fetchRefAccountCredits({ email: a.email, password: a.password })
-  }
-  return out
+  const entries = await Promise.all(
+    accounts.map(async a => {
+      const result = await fetchRefAccountCredits({ email: a.email, password: a.password })
+      return [a.id, result] as const
+    })
+  )
+  return Object.fromEntries(entries)
 }

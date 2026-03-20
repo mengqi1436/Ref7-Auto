@@ -30,6 +30,7 @@ function App() {
   const [defaultEmailType, setDefaultEmailType] = useState<EmailType>('tempmail_plus')
   const [notifications, setNotifications] = useState<NotificationItem[]>([])
   const [refAccountToRegister, setRefAccountToRegister] = useState<Account | null>(null)
+  const [ctx7AccountToRegister, setCtx7AccountToRegister] = useState<Account | null>(null)
   const [appVersion, setAppVersion] = useState('1.0.0')
 
   const handleNavigate = useCallback((page: Page, emailType?: EmailType) => {
@@ -38,8 +39,14 @@ function App() {
   }, [])
 
   const handleRefreshAccount = useCallback((account: Account) => {
-    setRefAccountToRegister(account)
-    setCurrentPage('register')
+    if (account.apiKey && account.refApiKey) return
+    if (!account.apiKey) {
+      setCtx7AccountToRegister(account)
+      setCurrentPage('register')
+    } else {
+      setRefAccountToRegister(account)
+      setCurrentPage('register')
+    }
   }, [])
 
   const addNotification = useCallback((type: NotificationType, message: string) => {
@@ -188,7 +195,7 @@ function App() {
         case 'accounts':
           return <AccountList accounts={accounts} setAccounts={setAccounts} onRefreshAccount={handleRefreshAccount} />
         case 'register':
-          return <RegisterPanel settings={settings} isRegistering={isRegistering} setIsRegistering={setIsRegistering} logs={logs} setLogs={setLogs} defaultEmailType={defaultEmailType} refAccountToRegister={refAccountToRegister} setRefAccountToRegister={setRefAccountToRegister} setAccounts={setAccounts} />
+          return <RegisterPanel settings={settings} isRegistering={isRegistering} setIsRegistering={setIsRegistering} logs={logs} setLogs={setLogs} defaultEmailType={defaultEmailType} refAccountToRegister={refAccountToRegister} setRefAccountToRegister={setRefAccountToRegister} ctx7AccountToRegister={ctx7AccountToRegister} setCtx7AccountToRegister={setCtx7AccountToRegister} setAccounts={setAccounts} />
         case 'settings':
           return <Settings settings={settings} setSettings={setSettings} theme={theme} setTheme={setTheme} onNotify={addNotification} />
         case 'about':

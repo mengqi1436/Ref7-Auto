@@ -47,6 +47,22 @@ interface RefRegistrationConfig {
   showBrowser: boolean
 }
 
+interface Context7RegistrationConfig {
+  accountId: number
+  email: string
+  password: string
+  emailType: EmailType
+  showBrowser: boolean
+}
+
+interface Context7RegistrationResult {
+  success: boolean
+  apiKey?: string
+  apiKeyName?: string
+  requestsLimit?: number
+  error?: string
+}
+
 interface RefRegistrationResult {
   success: boolean
   refApiKey?: string
@@ -300,6 +316,63 @@ async function handleRefRegistration(config: RefRegistrationConfig): Promise<Ref
   }
 }
 
+async function handleContext7Registration(config: Context7RegistrationConfig): Promise<Context7RegistrationResult> {
+  const settings = database.getSettings()
+  const browserOptions = { headless: !config.showBrowser, onLog: sendLog }
+
+  try {
+    sendLog('info', `开始为 ${config.email} 注册 Context7...`)
+    await initBrowser(browserOptions)
+
+    const success = await registerAccount({ email: config.email, password: config.password }, browserOptions)
+    if (!success) {
+      await closeBrowser()
+      return { success: false, error: 'Context7 注册失败' }
+    }
+
+    const emailService = config.emailType === 'tempmail_plus'
+      ? new TempMailPlusService(settings.tempMailPlus)
+      : new ImapMailService(settings.imapMail)
+
+    sendLog('info', '等待验证码邮件...')
+    const verificationCode = await getVerificationCode(
+      emailService,
+      config.email,
+      { emailType: config.emailType } as RegistrationConfig
+    )
+
+    if (!verificationCode) {
+      await closeBrowser()
+      return { success: false, error: '获取验证码超时' }
+    }
+
+    sendLog('success', `验证码: ${verificationCode}`)
+    const verified = await inputVerificationCode(verificationCode, browserOptions)
+    if (!verified) {
+      await closeBrowser()
+      return { success: false, error: '验证失败' }
+    }
+
+    sendLog('info', '开始获取 Context7 API Key...')
+    const apiKeyResult = await createContext7ApiKey(browserOptions)
+    await closeBrowser()
+
+    const { apiKey, keyName: apiKeyName, requestsLimit } = apiKeyResult
+    if (apiKeyResult.success && apiKey) {
+      sendLog('success', `API Key 创建成功: ${apiKey.slice(0, 12)}****`)
+      database.updateAccountApiKey(config.accountId, apiKey, apiKeyName, requestsLimit)
+      return { success: true, apiKey, apiKeyName, requestsLimit }
+    }
+
+    return { success: false, error: '获取 API Key 失败' }
+  } catch (error: unknown) {
+    await closeBrowser()
+    const message = getErrorMessage(error)
+    sendLog('error', `Context7 注册出错: ${message}`)
+    return { success: false, error: message }
+  }
+}
+
 export async function registerIpcHandlers(window: BrowserWindow): Promise<void> {
   mainWindow = window
   await database.initDatabase()
@@ -405,6 +478,8 @@ export async function registerIpcHandlers(window: BrowserWindow): Promise<void> 
     enqueueRegistrationTask(() => handleRegistration(config)))
   ipcMain.handle('register:startRef', (_, config: RefRegistrationConfig) =>
     enqueueRegistrationTask(() => handleRefRegistration(config)))
+  ipcMain.handle('register:startContext7', (_, config: Context7RegistrationConfig) =>
+    enqueueRegistrationTask(() => handleContext7Registration(config)))
   ipcMain.handle('register:stop', async () => { stopRegistration(); await closeBrowser() })
   ipcMain.handle('shell:openExternal', async (_, url: string) => {
     try { await shell.openExternal(url); return true }

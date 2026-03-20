@@ -108,6 +108,7 @@ export default function AccountList({ accounts, setAccounts, onRefreshAccount }:
     Record<number, { used: number | null; limit: number | null; error?: string }>
   >({})
   const [usageRefreshLoading, setUsageRefreshLoading] = useState(false)
+  const [singleRefreshLoading, setSingleRefreshLoading] = useState<Set<number>>(new Set())
 
   const itemsPerPage = 10
 
@@ -189,6 +190,36 @@ export default function AccountList({ accounts, setAccounts, onRefreshAccount }:
       setUsageRefreshLoading(false)
     }
   }, [accounts, usageRefreshLoading])
+
+  const handleSingleUsageRefresh = useCallback(async (account: Account) => {
+    const api = window.electronAPI
+    if (!api || singleRefreshLoading.has(account.id)) return
+    setSingleRefreshLoading(prev => new Set(prev).add(account.id))
+    try {
+      const tasks: Promise<void>[] = []
+      if (account.refApiKey && api.fetchRefCredits) {
+        tasks.push(
+          api.fetchRefCredits(account.id).then(r => {
+            setRefCreditsByAccount(prev => ({ ...prev, [account.id]: { credits: r.credits, error: r.error } }))
+          })
+        )
+      }
+      if (account.apiKey && api.fetchContext7Requests) {
+        tasks.push(
+          api.fetchContext7Requests(account.id).then(r => {
+            setCtx7RequestsByAccount(prev => ({ ...prev, [account.id]: { used: r.used, limit: r.limit, error: r.error } }))
+          })
+        )
+      }
+      await Promise.all(tasks)
+    } finally {
+      setSingleRefreshLoading(prev => {
+        const next = new Set(prev)
+        next.delete(account.id)
+        return next
+      })
+    }
+  }, [singleRefreshLoading])
 
   const toggleSelectAll = useCallback(() => {
     setSelectedIds(prev => 
@@ -543,13 +574,25 @@ export default function AccountList({ accounts, setAccounts, onRefreshAccount }:
                     <td className="px-4 py-4 text-center">
                       <div className="inline-flex items-center gap-1.5">
                         <motion.button
-                          onClick={() => onRefreshAccount?.(account)}
+                          onClick={() => {
+                            if (account.apiKey && account.refApiKey) {
+                              void handleSingleUsageRefresh(account)
+                            } else {
+                              onRefreshAccount?.(account)
+                            }
+                          }}
+                          disabled={singleRefreshLoading.has(account.id)}
                           whileHover={{ scale: 1.1 }}
                           whileTap={{ scale: 0.9 }}
-                          className="p-1.5 rounded text-primary bg-primary/10 hover:bg-primary/20 transition-colors cursor-pointer"
-                          title="注册 Ref API"
+                          className="p-1.5 rounded text-primary bg-primary/10 hover:bg-primary/20 transition-colors cursor-pointer disabled:opacity-50"
+                          title={
+                            account.apiKey && account.refApiKey ? '刷新额度'
+                            : account.apiKey ? '注册 Ref API'
+                            : account.refApiKey ? '注册 Context7'
+                            : '注册 Context7 + Ref'
+                          }
                         >
-                          <RefreshCw size={16} />
+                          <RefreshCw size={16} className={singleRefreshLoading.has(account.id) ? 'animate-spin' : ''} />
                         </motion.button>
                         <motion.button
                           onClick={() => handleSingleDelete(account.id)}

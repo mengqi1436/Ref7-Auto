@@ -398,9 +398,11 @@ export async function fetchContext7AccountRequests(data: Ctx7Credentials): Promi
 export async function fetchAllContext7RequestsSequential(
   accounts: { id: number; email: string; password: string }[]
 ): Promise<Record<number, Context7RequestsResult>> {
-  const out: Record<number, Context7RequestsResult> = {}
-  for (const a of accounts) {
-    out[a.id] = await fetchContext7AccountRequests({ email: a.email, password: a.password })
-  }
-  return out
+  const entries = await Promise.all(
+    accounts.map(async a => {
+      const result = await fetchContext7AccountRequests({ email: a.email, password: a.password })
+      return [a.id, result] as const
+    })
+  )
+  return Object.fromEntries(entries)
 }

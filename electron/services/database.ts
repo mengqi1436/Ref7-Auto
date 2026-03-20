@@ -208,6 +208,17 @@ export function updateAccountStatus(id: number, status: AccountStatus): void {
   }
 }
 
+export function updateAccountApiKey(id: number, apiKey: string, apiKeyName?: string, requestsLimit?: number): void {
+  const data = readJsonFile<AccountsData>(ACCOUNTS_FILE, getDefaultAccountsData())
+  const account = data.accounts.find(a => a.id === id)
+  if (account) {
+    account.apiKey = apiKey
+    if (apiKeyName !== undefined) account.apiKeyName = apiKeyName
+    if (requestsLimit !== undefined) account.requestsLimit = requestsLimit
+    writeJsonFile(ACCOUNTS_FILE, data)
+  }
+}
+
 export function updateAccountRefApiKey(id: number, refApiKey: string): void {
   const data = readJsonFile<AccountsData>(ACCOUNTS_FILE, getDefaultAccountsData())
   const account = data.accounts.find(a => a.id === id)

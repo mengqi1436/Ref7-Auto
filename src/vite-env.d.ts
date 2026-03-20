@@ -8,6 +8,8 @@ import type {
   RegistrationConfig,
   RefRegistrationConfig,
   RefRegistrationResult,
+  Context7RegistrationConfig,
+  Context7RegistrationResult,
   RefCreditsFetchResult,
   RefCreditsAllResponse,
   Context7RequestsFetchResult,
@@ -24,6 +26,8 @@ export type {
   RegistrationConfig,
   RefRegistrationConfig,
   RefRegistrationResult,
+  Context7RegistrationConfig,
+  Context7RegistrationResult,
   RefCreditsFetchResult,
   RefCreditsAllResponse,
   Context7RequestsFetchResult,
@@ -57,6 +61,7 @@ interface ElectronAPI {
   startRegistration: (config: RegistrationConfig) => Promise<void>
   stopRegistration: () => Promise<void>
   startRefRegistration: (config: RefRegistrationConfig) => Promise<RefRegistrationResult>
+  startContext7Registration: (config: Context7RegistrationConfig) => Promise<Context7RegistrationResult>
 
   testTempMailPlus: (config: TempMailPlusConfig) => Promise<boolean>
   testImapMail: (config: ImapMailConfig) => Promise<boolean>

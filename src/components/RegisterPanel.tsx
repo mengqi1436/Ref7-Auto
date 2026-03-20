@@ -12,6 +12,8 @@ interface RegisterPanelProps {
   defaultEmailType?: EmailType
   refAccountToRegister?: Account | null
   setRefAccountToRegister?: React.Dispatch<React.SetStateAction<Account | null>>
+  ctx7AccountToRegister?: Account | null
+  setCtx7AccountToRegister?: React.Dispatch<React.SetStateAction<Account | null>>
   setAccounts?: React.Dispatch<React.SetStateAction<Account[]>>
 }
 
@@ -31,6 +33,8 @@ export default function RegisterPanel({
   defaultEmailType = 'tempmail_plus',
   refAccountToRegister,
   setRefAccountToRegister,
+  ctx7AccountToRegister,
+  setCtx7AccountToRegister,
   setAccounts
 }: RegisterPanelProps) {
   const [emailType, setEmailType] = useState<EmailType>(defaultEmailType)
@@ -39,6 +43,7 @@ export default function RegisterPanel({
   const logsEndRef = useRef<HTMLDivElement>(null)
   const isRunningRef = useRef(false)
 
+  const isCtx7Mode = !!ctx7AccountToRegister
   const isRefMode = !!refAccountToRegister
   const maxBatchCount = settings?.registration.maxBatchCount ?? 20
 
@@ -134,6 +139,46 @@ export default function RegisterPanel({
     }
   }, [refAccountToRegister, showBrowser, setIsRegistering, addLog, setRefAccountToRegister, setAccounts])
 
+  const handleStartContext7Registration = useCallback(async () => {
+    if (!ctx7AccountToRegister) return
+
+    setIsRegistering(true)
+    isRunningRef.current = true
+    addLog('info', `开始为账户 ${ctx7AccountToRegister.email} 注册 Context7...`)
+
+    try {
+      const result = await window.electronAPI?.startContext7Registration?.({
+        accountId: ctx7AccountToRegister.id,
+        email: ctx7AccountToRegister.email,
+        password: ctx7AccountToRegister.password,
+        emailType: ctx7AccountToRegister.emailType,
+        showBrowser
+      })
+
+      if (result?.success && result.apiKey) {
+        addLog('success', 'Context7 注册成功！')
+        addLog('success', `API Key: ${result.apiKey.slice(0, 12)}****`)
+        const updatedAccount = { ...ctx7AccountToRegister, apiKey: result.apiKey, apiKeyName: result.apiKeyName, requestsLimit: result.requestsLimit }
+        setAccounts?.(prev => prev.map(acc =>
+          acc.id === ctx7AccountToRegister.id ? { ...acc, apiKey: result.apiKey, apiKeyName: result.apiKeyName, requestsLimit: result.requestsLimit } : acc
+        ))
+        setCtx7AccountToRegister?.(null)
+
+        if (!updatedAccount.refApiKey) {
+          addLog('info', '自动续接 Ref API 注册...')
+          setRefAccountToRegister?.(updatedAccount)
+        }
+      } else {
+        addLog('error', `Context7 注册失败: ${result?.error || '未知错误'}`)
+      }
+    } catch (error) {
+      addLog('error', `Context7 注册失败: ${error instanceof Error ? error.message : '未知错误'}`)
+    } finally {
+      setIsRegistering(false)
+      isRunningRef.current = false
+    }
+  }, [ctx7AccountToRegister, showBrowser, setIsRegistering, addLog, setCtx7AccountToRegister, setRefAccountToRegister, setAccounts])
+
   const ToggleSwitch = ({ active, color }: { active: boolean; color: string }) => (
     <motion.button
       onClick={() => setShowBrowser(!showBrowser)}
@@ -161,18 +206,64 @@ export default function RegisterPanel({
       >
         <div>
           <h2 className="text-3xl font-bold tracking-tight">
-            <span className={isRefMode ? 'text-accent' : 'text-primary'}>
-              {isRefMode ? 'Ref' : '开始'}
+            <span className={isCtx7Mode ? 'text-primary' : isRefMode ? 'text-accent' : 'text-primary'}>
+              {isCtx7Mode ? 'Context7' : isRefMode ? 'Ref' : '开始'}
             </span>
-            {isRefMode ? ' 注册' : '注册'}
+            {isCtx7Mode || isRefMode ? ' 注册' : '注册'}
           </h2>
           <p className="text-lg text-muted-foreground mt-1">
-            {isRefMode ? '为已有账户注册 Ref API' : '配置并运行自动化注册任务'}
+            {isCtx7Mode ? '为已有账户注册 Context7 API' : isRefMode ? '为已有账户注册 Ref API' : '配置并运行自动化注册任务'}
           </p>
         </div>
 
         <div className="space-y-5">
-          {isRefMode ? (
+          {isCtx7Mode ? (
+            <div className="rounded-2xl border border-primary/50 bg-card p-6 space-y-6">
+              <div className="flex items-center justify-between">
+                <h3 className="font-semibold text-lg flex items-center gap-2">
+                  <Zap size={20} className="text-primary" />
+                  Context7 注册
+                </h3>
+                <motion.button
+                  onClick={() => setCtx7AccountToRegister?.(null)}
+                  disabled={isRegistering}
+                  whileHover={{ scale: 1.1 }}
+                  whileTap={{ scale: 0.9 }}
+                  className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  <X size={18} />
+                </motion.button>
+              </div>
+
+              <div className="space-y-4">
+                <div className="p-4 rounded-xl bg-primary/5 border border-primary/20">
+                  <p className="text-sm text-muted-foreground mb-1">目标账户</p>
+                  <p className="font-mono text-base font-medium">{ctx7AccountToRegister?.email}</p>
+                </div>
+                <div className="text-sm text-muted-foreground space-y-2">
+                  <p>将执行以下操作：</p>
+                  <ol className="list-decimal list-inside space-y-1 ml-2">
+                    <li>访问 context7.com 注册页面</li>
+                    <li>使用账户邮箱和密码进行注册</li>
+                    <li>获取邮箱验证码并验证</li>
+                    <li>创建 Context7 API Key</li>
+                    {!ctx7AccountToRegister?.refApiKey && <li>完成后自动续接 Ref 注册</li>}
+                  </ol>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between pt-5 border-t border-border/50">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <Monitor size={18} className="text-muted-foreground" />
+                    <span className="text-base font-medium">调试模式</span>
+                  </div>
+                  <p className="text-sm text-muted-foreground">显示浏览器窗口</p>
+                </div>
+                <ToggleSwitch active={showBrowser} color="bg-primary" />
+              </div>
+            </div>
+          ) : isRefMode ? (
             <div className="rounded-2xl border border-accent/50 bg-card p-6 space-y-6">
               <div className="flex items-center justify-between">
                 <h3 className="font-semibold text-lg flex items-center gap-2">
@@ -287,17 +378,19 @@ export default function RegisterPanel({
 
           {!isRegistering ? (
             <motion.button
-              onClick={isRefMode ? handleStartRefRegistration : handleStart}
+              onClick={isCtx7Mode ? handleStartContext7Registration : isRefMode ? handleStartRefRegistration : handleStart}
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
               className={`w-full flex items-center justify-center gap-3 p-5 rounded-xl font-semibold text-lg transition-all cursor-pointer ${
-                isRefMode 
-                  ? 'bg-accent text-accent-foreground hover:bg-accent/90 shadow-neon-accent' 
-                  : 'bg-primary text-primary-foreground hover:bg-primary/90 shadow-neon'
+                isCtx7Mode
+                  ? 'bg-primary text-primary-foreground hover:bg-primary/90 shadow-neon'
+                  : isRefMode 
+                    ? 'bg-accent text-accent-foreground hover:bg-accent/90 shadow-neon-accent' 
+                    : 'bg-primary text-primary-foreground hover:bg-primary/90 shadow-neon'
               }`}
             >
-              {isRefMode ? <RefreshCw size={22} /> : <Play size={22} fill="currentColor" />}
-              {isRefMode ? '开始 Ref 注册' : '启动任务'}
+              {isCtx7Mode ? <Zap size={22} /> : isRefMode ? <RefreshCw size={22} /> : <Play size={22} fill="currentColor" />}
+              {isCtx7Mode ? '开始 Context7 注册' : isRefMode ? '开始 Ref 注册' : '启动任务'}
             </motion.button>
           ) : (
             <motion.button

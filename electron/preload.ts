@@ -34,6 +34,22 @@ interface RefRegistrationConfig {
   showBrowser: boolean
 }
 
+interface Context7RegistrationConfig {
+  accountId: number
+  email: string
+  password: string
+  emailType: EmailType
+  showBrowser: boolean
+}
+
+interface Context7RegistrationResult {
+  success: boolean
+  apiKey?: string
+  apiKeyName?: string
+  requestsLimit?: number
+  error?: string
+}
+
 interface RefRegistrationResult {
   success: boolean
   refApiKey?: string
@@ -134,6 +150,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   stopRegistration: (): Promise<void> => ipcRenderer.invoke('register:stop'),
   startRefRegistration: (config: RefRegistrationConfig): Promise<RefRegistrationResult> =>
     ipcRenderer.invoke('register:startRef', config),
+  startContext7Registration: (config: Context7RegistrationConfig): Promise<Context7RegistrationResult> =>
+    ipcRenderer.invoke('register:startContext7', config),
 
   testTempMailPlus: (config: TempMailPlusConfig): Promise<boolean> => 
     ipcRenderer.invoke('email:testTempMailPlus', config),

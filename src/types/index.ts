@@ -37,6 +37,22 @@ export interface RefRegistrationResult {
   error?: string
 }
 
+export interface Context7RegistrationConfig {
+  accountId: number
+  email: string
+  password: string
+  emailType: EmailType
+  showBrowser: boolean
+}
+
+export interface Context7RegistrationResult {
+  success: boolean
+  apiKey?: string
+  apiKeyName?: string
+  requestsLimit?: number
+  error?: string
+}
+
 export interface RefCreditsFetchResult {
   credits: number | null
   error?: string
