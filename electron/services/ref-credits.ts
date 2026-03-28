@@ -20,10 +20,14 @@ export const FIRESTORE_USER_DOC = (localId: string) =>
 
 let cachedFirebaseWebApiKey: string | null = null
 
+const IDENTITY_LOOKUP = 'https://identitytoolkit.googleapis.com/v1/accounts:lookup'
+const IDENTITY_SEND_OOB = 'https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode'
+
 export interface RefSessionEntry {
   cookie: string
   localId: string
   idToken: string
+  emailVerified?: boolean | null
 }
 
 const sessionByEmail = new Map<string, RefSessionEntry>()
@@ -35,7 +39,50 @@ export interface RefRegistrationData {
 
 export interface RefCreditsResult {
   credits: number | null
+  emailVerified?: boolean | null
   error?: string
+}
+
+async function lookupEmailVerified(apiKey: string, idToken: string): Promise<boolean | null> {
+  try {
+    const url = `${IDENTITY_LOOKUP}?key=${encodeURIComponent(apiKey)}`
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ idToken })
+    })
+    const data = (await r.json().catch(() => ({}))) as {
+      users?: Array<{ emailVerified?: boolean }>
+    }
+    const u = data.users?.[0]
+    if (typeof u?.emailVerified === 'boolean') return u.emailVerified
+  } catch {}
+  return null
+}
+
+async function firebaseSendVerificationEmailLocal(
+  apiKey: string,
+  idToken: string
+): Promise<{ success: true } | { error: string }> {
+  const url = `${IDENTITY_SEND_OOB}?key=${encodeURIComponent(apiKey)}`
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ requestType: 'VERIFY_EMAIL' as const, idToken })
+  })
+  const data = (await r.json().catch(() => ({}))) as { error?: { message?: string } }
+  if (!r.ok) return { error: data.error?.message ?? `Firebase HTTP ${r.status}` }
+  if (data.error?.message) return { error: data.error.message }
+  return { success: true }
+}
+
+export async function resendRefVerificationEmail(
+  data: RefRegistrationData
+): Promise<{ success: true } | { error: string }> {
+  const apiKey = await resolveFirebaseWebApiKey()
+  const signIn = await firebaseSignInWithPassword(apiKey, data.email, data.password)
+  if ('error' in signIn) return { error: signIn.error }
+  return firebaseSendVerificationEmailLocal(apiKey, signIn.idToken)
 }
 
 function getSetCookieLines(headers: Headers): string[] {
@@ -216,10 +263,18 @@ async function establishSessionCookie(email: string, password: string): Promise<
   const signIn = await firebaseSignInWithPassword(apiKey, email, password)
   if ('error' in signIn) return { error: `Firebase: ${signIn.error}` }
 
-  const sess = await refToolsCreateSession(signIn.idToken)
+  const [sess, ev] = await Promise.all([
+    refToolsCreateSession(signIn.idToken),
+    lookupEmailVerified(apiKey, signIn.idToken)
+  ])
   if ('error' in sess) return { error: sess.error }
 
-  return { cookie: sess.cookie, localId: signIn.localId, idToken: signIn.idToken }
+  return {
+    cookie: sess.cookie,
+    localId: signIn.localId,
+    idToken: signIn.idToken,
+    emailVerified: ev
+  }
 }
 
 async function resolveCredits(
@@ -242,25 +297,42 @@ export async function fetchRefAccountCredits(data: RefRegistrationData): Promise
     let entry = sessionByEmail.get(key)
 
     if (entry && (await refSessionLooksValid(entry.cookie))) {
-      const got = await resolveCredits(entry)
-      if ('credits' in got) return { credits: got.credits }
+      const apiKey = await resolveFirebaseWebApiKey()
+      const [got, ev] = await Promise.all([
+        resolveCredits(entry),
+        lookupEmailVerified(apiKey, entry.idToken)
+      ])
+      const next: RefSessionEntry = { ...entry, emailVerified: ev }
+      sessionByEmail.set(key, next)
+      if ('credits' in got) {
+        return { credits: got.credits, emailVerified: ev }
+      }
       sessionByEmail.delete(key)
     } else if (entry) {
       sessionByEmail.delete(key)
     }
 
     const established = await establishSessionCookie(data.email, data.password)
-    if ('error' in established) return { credits: null, error: established.error }
+    if ('error' in established) {
+      return { credits: null, emailVerified: null, error: established.error }
+    }
 
     sessionByEmail.set(key, established)
     const got2 = await resolveCredits(established)
-    if ('credits' in got2) return { credits: got2.credits }
+    const evOut = established.emailVerified ?? null
+    if ('credits' in got2) {
+      return { credits: got2.credits, emailVerified: evOut }
+    }
 
     sessionByEmail.delete(key)
-    return { credits: null, error: 'error' in got2 ? got2.error : '未解析到 Available Credits' }
+    return {
+      credits: null,
+      emailVerified: evOut,
+      error: 'error' in got2 ? got2.error : '未解析到 Available Credits'
+    }
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : '未知错误'
-    return { credits: null, error: message }
+    return { credits: null, emailVerified: null, error: message }
   }
 }
 

@@ -16,7 +16,8 @@ import {
   fetchRefAccountCredits,
   fetchAllRefCredits,
   resolveFirebaseWebApiKey,
-  firebaseSignInWithPassword
+  firebaseSignInWithPassword,
+  resendRefVerificationEmail
 } from '../services/ref-credits'
 import {
   refApiRegisterFull,
@@ -204,12 +205,117 @@ async function getRefVerificationLink(
   return null
 }
 
+async function processRefVerificationLink(
+  accountId: number,
+  email: string,
+  password: string,
+  verificationLink: string,
+  idTokenForOob: string
+): Promise<RefRegistrationResult> {
+  let oobCode = extractOobCodeFromLink(verificationLink)
+  if (!oobCode) {
+    sendLog('warning', '无法从链接提取 oobCode，尝试直接访问验证链接...')
+    try {
+      const linkUrl = new URL(verificationLink)
+      if (linkUrl.protocol !== 'https:') {
+        return { success: false, error: '验证链接协议不安全' }
+      }
+      await fetch(verificationLink, { redirect: 'follow' })
+      sendLog('info', '已访问验证链接')
+    } catch {
+      return { success: false, error: '验证链接访问失败' }
+    }
+  }
+
+  const webApiKey = await resolveFirebaseWebApiKey()
+
+  if (oobCode) {
+    sendLog('info', '提交验证并完成 Ref 绑定...')
+    const completion = await refApiCompleteVerification(webApiKey, oobCode, idTokenForOob)
+    if (!completion.success || !completion.apiKey) {
+      const errMsg = completion.error || '验证完成但获取 API Key 失败'
+      if (isInvalidOobCodeError(errMsg)) {
+        sendLog(
+          'warning',
+          '验证链接可能无效或已过期，尝试通过密码登录检查邮箱验证状态...'
+        )
+        const signIn = await firebaseSignInWithPassword(webApiKey, email, password)
+        if ('error' in signIn) {
+          return {
+            success: false,
+            error: `${errMsg}；密码登录失败: ${signIn.error}`
+          }
+        }
+        const lookup = await firebaseLookup(webApiKey, signIn.idToken)
+        if ('error' in lookup) {
+          return {
+            success: false,
+            error: `${errMsg}；账户查询失败: ${lookup.error}`
+          }
+        }
+        if (!lookup.emailVerified) {
+          return {
+            success: false,
+            error: '验证链接无效或已过期，且邮箱仍未完成验证'
+          }
+        }
+        const keyResult = await createRefApiKey(signIn.idToken)
+        if ('error' in keyResult) {
+          return { success: false, error: keyResult.error }
+        }
+        sendLog('success', `Ref API Key: ${keyResult.apiKey.slice(0, 15)}****`)
+        database.updateAccountRefApiKey(accountId, keyResult.apiKey)
+        database.updateAccountRefEmailVerified(accountId, true)
+        const refSnap = await persistRefCreditsAfterBind(accountId, email, password)
+        return {
+          success: true,
+          refApiKey: keyResult.apiKey,
+          ...refSnap
+        }
+      }
+      return { success: false, error: errMsg }
+    }
+    sendLog('success', `Ref API Key: ${completion.apiKey.slice(0, 15)}****`)
+    database.updateAccountRefApiKey(accountId, completion.apiKey)
+    database.updateAccountRefEmailVerified(accountId, true)
+    const refSnap = await persistRefCreditsAfterBind(accountId, email, password)
+    return {
+      success: true,
+      refApiKey: completion.apiKey,
+      ...refSnap
+    }
+  }
+
+  sendLog('info', '等待验证生效后获取 API Key...')
+  await delay(3000)
+  const signIn = await firebaseSignInWithPassword(webApiKey, email, password)
+  if ('error' in signIn) {
+    return { success: false, error: `重新登录失败: ${signIn.error}` }
+  }
+  const keyResult = await createRefApiKey(signIn.idToken)
+  if ('error' in keyResult) {
+    return { success: false, error: keyResult.error }
+  }
+  sendLog('success', `Ref API Key: ${keyResult.apiKey.slice(0, 15)}****`)
+  database.updateAccountRefApiKey(accountId, keyResult.apiKey)
+  database.updateAccountRefEmailVerified(accountId, true)
+  const refSnap = await persistRefCreditsAfterBind(accountId, email, password)
+  return {
+    success: true,
+    refApiKey: keyResult.apiKey,
+    ...refSnap
+  }
+}
+
 async function persistRefCreditsAfterBind(
   accountId: number,
   email: string,
   password: string
 ): Promise<{ refCredits: number; refCreditsUpdatedAt: string } | undefined> {
   const r = await fetchRefAccountCredits({ email, password })
+  if (r.emailVerified === true || r.emailVerified === false) {
+    database.updateAccountRefEmailVerified(accountId, r.emailVerified)
+  }
   if (r.credits !== null) {
     database.updateAccountRefCredits(accountId, r.credits)
     const row = database.getAllAccounts().find(a => a.id === accountId)
@@ -426,6 +532,7 @@ async function handleRefRegistration(config: RefRegistrationConfig): Promise<Ref
       }
       sendLog('success', `Ref API Key: ${keyResult.apiKey.slice(0, 15)}****`)
       database.updateAccountRefApiKey(accountId, keyResult.apiKey)
+      database.updateAccountRefEmailVerified(accountId, true)
       const refSnap = await persistRefCreditsAfterBind(accountId, email, password)
       return {
         success: true,
@@ -441,97 +548,8 @@ async function handleRefRegistration(config: RefRegistrationConfig): Promise<Ref
     if (!verificationLink) {
       return { success: false, error: '获取验证链接超时' }
     }
-    sendLog('success', '获取到验证链接')
 
-    const oobCode = extractOobCodeFromLink(verificationLink)
-    if (!oobCode) {
-      sendLog('warning', '无法从链接提取 oobCode，尝试直接访问验证链接...')
-      try {
-        const linkUrl = new URL(verificationLink)
-        if (linkUrl.protocol !== 'https:') {
-          return { success: false, error: '验证链接协议不安全' }
-        }
-        await fetch(verificationLink, { redirect: 'follow' })
-        sendLog('info', '已访问验证链接')
-      } catch {
-        return { success: false, error: '验证链接访问失败' }
-      }
-    }
-
-    const webApiKey = await resolveFirebaseWebApiKey()
-
-    if (oobCode) {
-      const completion = await refApiCompleteVerification(webApiKey, oobCode, regResult.idToken)
-      if (!completion.success || !completion.apiKey) {
-        const errMsg = completion.error || '验证完成但获取 API Key 失败'
-        if (isInvalidOobCodeError(errMsg)) {
-          sendLog(
-            'warning',
-            '验证链接可能无效或已过期，尝试通过密码登录检查邮箱验证状态...'
-          )
-          const signIn = await firebaseSignInWithPassword(webApiKey, email, password)
-          if ('error' in signIn) {
-            return {
-              success: false,
-              error: `${errMsg}；密码登录失败: ${signIn.error}`
-            }
-          }
-          const lookup = await firebaseLookup(webApiKey, signIn.idToken)
-          if ('error' in lookup) {
-            return {
-              success: false,
-              error: `${errMsg}；账户查询失败: ${lookup.error}`
-            }
-          }
-          if (!lookup.emailVerified) {
-            return {
-              success: false,
-              error: '验证链接无效或已过期，且邮箱仍未完成验证'
-            }
-          }
-          const keyResult = await createRefApiKey(signIn.idToken)
-          if ('error' in keyResult) {
-            return { success: false, error: keyResult.error }
-          }
-          sendLog('success', `Ref API Key: ${keyResult.apiKey.slice(0, 15)}****`)
-          database.updateAccountRefApiKey(accountId, keyResult.apiKey)
-          const refSnap = await persistRefCreditsAfterBind(accountId, email, password)
-          return {
-            success: true,
-            refApiKey: keyResult.apiKey,
-            ...refSnap
-          }
-        }
-        return { success: false, error: errMsg }
-      }
-      sendLog('success', `Ref API Key: ${completion.apiKey.slice(0, 15)}****`)
-      database.updateAccountRefApiKey(accountId, completion.apiKey)
-      const refSnap = await persistRefCreditsAfterBind(accountId, email, password)
-      return {
-        success: true,
-        refApiKey: completion.apiKey,
-        ...refSnap
-      }
-    }
-
-    sendLog('info', '等待验证生效后获取 API Key...')
-    await delay(3000)
-    const signIn = await firebaseSignInWithPassword(webApiKey, email, password)
-    if ('error' in signIn) {
-      return { success: false, error: `重新登录失败: ${signIn.error}` }
-    }
-    const keyResult = await createRefApiKey(signIn.idToken)
-    if ('error' in keyResult) {
-      return { success: false, error: keyResult.error }
-    }
-    sendLog('success', `Ref API Key: ${keyResult.apiKey.slice(0, 15)}****`)
-    database.updateAccountRefApiKey(accountId, keyResult.apiKey)
-    const refSnap = await persistRefCreditsAfterBind(accountId, email, password)
-    return {
-      success: true,
-      refApiKey: keyResult.apiKey,
-      ...refSnap
-    }
+    return processRefVerificationLink(accountId, email, password, verificationLink, regResult.idToken)
   } catch (error: unknown) {
     const message = getErrorMessage(error)
     sendLog('error', `Ref 注册出错: ${message}`)
@@ -686,17 +704,103 @@ export async function registerIpcHandlers(window: BrowserWindow): Promise<void> 
   ipcMain.handle('accounts:updateRefApiKey', (_, id: number, refApiKey: string) =>
     database.updateAccountRefApiKey(id, refApiKey))
 
-  ipcMain.handle('accounts:fetchRefCredits', async (_, accountId: number) => {
-    if (isRefRegistrationRunning()) {
-      return { credits: null as number | null, error: 'Ref 注册进行中' }
+  ipcMain.handle(
+    'accounts:fetchRefCredits',
+    async (
+      _,
+      accountId: number,
+      options?: { resendVerificationIfUnverified?: boolean }
+    ) => {
+      if (isRefRegistrationRunning()) {
+        return {
+          credits: null as number | null,
+          emailVerified: null as boolean | null,
+          error: 'Ref 注册进行中'
+        }
+      }
+      const acc = database.getAllAccounts().find(a => a.id === accountId)
+      if (!acc) {
+        return { credits: null as number | null, emailVerified: null as boolean | null, error: '账户不存在' }
+      }
+      if (!acc.refApiKey) {
+        return { credits: null as number | null, emailVerified: null as boolean | null, error: '未绑定 Ref API' }
+      }
+      const r = await fetchRefAccountCredits({ email: acc.email, password: acc.password })
+      if (r.credits !== null) database.updateAccountRefCredits(accountId, r.credits)
+      if (r.emailVerified === true || r.emailVerified === false) {
+        database.updateAccountRefEmailVerified(accountId, r.emailVerified)
+      }
+      let verificationEmailSent: boolean | undefined
+      if (
+        options?.resendVerificationIfUnverified &&
+        acc.refApiKey &&
+        r.emailVerified === false
+      ) {
+        sendLog('info', `[账户管理] Ref 邮箱未验证，开始补全验证: ${acc.email}`)
+        sendLog('info', '发送验证邮件...')
+        const sent = await resendRefVerificationEmail({ email: acc.email, password: acc.password })
+        if ('error' in sent) {
+          sendLog('error', `发送验证邮件失败: ${sent.error}`)
+          return {
+            credits: r.credits,
+            emailVerified: r.emailVerified,
+            error: `发送验证邮件失败: ${sent.error}`
+          }
+        }
+        verificationEmailSent = true
+        sendLog('success', '验证邮件已发送')
+        sendLog('info', '等待验证邮件投递…')
+        await delay(5000)
+        const settings = database.getSettings()
+        const link = await getRefVerificationLink(settings, acc.email)
+        if (!link) {
+          sendLog('error', '获取验证链接超时')
+          return {
+            credits: r.credits,
+            emailVerified: r.emailVerified,
+            error: '获取验证链接超时',
+            verificationEmailSent
+          }
+        }
+        sendLog('info', '登录 Firebase 并提交邮箱验证…')
+        const webApiKey = await resolveFirebaseWebApiKey()
+        const signIn = await firebaseSignInWithPassword(webApiKey, acc.email, acc.password)
+        if ('error' in signIn) {
+          sendLog('error', `Firebase 登录失败: ${signIn.error}`)
+          return {
+            credits: r.credits,
+            emailVerified: r.emailVerified,
+            error: signIn.error,
+            verificationEmailSent
+          }
+        }
+        const fin = await processRefVerificationLink(
+          accountId,
+          acc.email,
+          acc.password,
+          link,
+          signIn.idToken
+        )
+        if (!fin.success) {
+          sendLog('error', fin.error || 'Ref 验证失败')
+          return {
+            credits: r.credits,
+            emailVerified: false,
+            error: fin.error,
+            verificationEmailSent
+          }
+        }
+        const r2 = await fetchRefAccountCredits({ email: acc.email, password: acc.password })
+        if (r2.credits !== null) database.updateAccountRefCredits(accountId, r2.credits)
+        if (r2.emailVerified === true || r2.emailVerified === false) {
+          database.updateAccountRefEmailVerified(accountId, r2.emailVerified)
+        }
+        sendLog('success', '[账户管理] Ref 邮箱验证与额度已更新')
+        return { ...r2, verificationEmailSent: true }
+      }
+      return { ...r, verificationEmailSent }
     }
-    const acc = database.getAllAccounts().find(a => a.id === accountId)
-    if (!acc) return { credits: null as number | null, error: '账户不存在' }
-    if (!acc.refApiKey) return { credits: null as number | null, error: '未绑定 Ref API' }
-    const r = await fetchRefAccountCredits({ email: acc.email, password: acc.password })
-    if (r.credits !== null) database.updateAccountRefCredits(accountId, r.credits)
-    return r
-  })
+  )
 
   ipcMain.handle('accounts:fetchRefCreditsAll', async () => {
     if (isRefRegistrationRunning()) {
@@ -707,7 +811,11 @@ export async function registerIpcHandlers(window: BrowserWindow): Promise<void> 
       withRef.map(a => ({ id: a.id, email: a.email, password: a.password }))
     )
     for (const [idStr, r] of Object.entries(results)) {
-      if (r.credits !== null) database.updateAccountRefCredits(Number(idStr), r.credits)
+      const id = Number(idStr)
+      if (r.credits !== null) database.updateAccountRefCredits(id, r.credits)
+      if (r.emailVerified === true || r.emailVerified === false) {
+        database.updateAccountRefEmailVerified(id, r.emailVerified)
+      }
     }
     return { results }
   })

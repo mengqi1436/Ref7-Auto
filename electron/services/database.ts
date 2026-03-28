@@ -20,6 +20,8 @@ export interface Account {
   refApiKey?: string
   refCredits?: number
   refCreditsUpdatedAt?: string
+  refEmailVerified?: boolean
+  refEmailVerifiedUpdatedAt?: string
   ctx7RequestsUsed?: number
   ctx7RequestsLimit?: number
   ctx7RequestsUpdatedAt?: string
@@ -184,6 +186,8 @@ export function addAccount(account: Omit<Account, 'id' | 'createdAt'>): Account 
     refApiKey: account.refApiKey,
     refCredits: account.refCredits,
     refCreditsUpdatedAt: account.refCreditsUpdatedAt,
+    refEmailVerified: account.refEmailVerified,
+    refEmailVerifiedUpdatedAt: account.refEmailVerifiedUpdatedAt,
     ctx7RequestsUsed: account.ctx7RequestsUsed,
     ctx7RequestsLimit: account.ctx7RequestsLimit,
     ctx7RequestsUpdatedAt: account.ctx7RequestsUpdatedAt
@@ -248,6 +252,16 @@ export function updateAccountRefCredits(id: number, credits: number): void {
   }
 }
 
+export function updateAccountRefEmailVerified(id: number, verified: boolean): void {
+  const data = readJsonFile<AccountsData>(ACCOUNTS_FILE, getDefaultAccountsData())
+  const account = data.accounts.find(a => a.id === id)
+  if (account) {
+    account.refEmailVerified = verified
+    account.refEmailVerifiedUpdatedAt = new Date().toISOString()
+    writeJsonFile(ACCOUNTS_FILE, data)
+  }
+}
+
 export function updateAccountContext7Requests(id: number, used: number, limit: number): void {
   const data = readJsonFile<AccountsData>(ACCOUNTS_FILE, getDefaultAccountsData())
   const account = data.accounts.find(a => a.id === id)
@@ -299,6 +313,8 @@ export function importAccounts(accountsToImport: Partial<Account>[]): ImportResu
       refApiKey: account.refApiKey,
       refCredits: account.refCredits,
       refCreditsUpdatedAt: account.refCreditsUpdatedAt,
+      refEmailVerified: account.refEmailVerified,
+      refEmailVerifiedUpdatedAt: account.refEmailVerifiedUpdatedAt,
       ctx7RequestsUsed: account.ctx7RequestsUsed,
       ctx7RequestsLimit: account.ctx7RequestsLimit,
       ctx7RequestsUpdatedAt: account.ctx7RequestsUpdatedAt

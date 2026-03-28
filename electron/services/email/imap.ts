@@ -13,6 +13,8 @@ interface ImapMailConfig {
 
 type ImapSearchCriteria = (string | [string, string | Date])[]
 
+const REF_WELCOME_SUBJECT = 'Welcome to Ref.'
+
 export class ImapMailService {
   private config: ImapMailConfig
   private onLog?: (type: string, message: string) => void
@@ -24,6 +26,18 @@ export class ImapMailService {
 
   private log(type: string, message: string) {
     this.onLog?.(type, message)
+  }
+
+  private purgeWelcomeToRefMails(imap: Imap, onDone: () => void): void {
+    imap.search([['SUBJECT', REF_WELCOME_SUBJECT]], (err, ids) => {
+      if (err || !ids?.length) {
+        onDone()
+        return
+      }
+      imap.addFlags(ids, ['\\Seen', '\\Deleted'], () => {
+        onDone()
+      })
+    })
   }
 
   async testConnection(): Promise<boolean> {
@@ -168,9 +182,11 @@ export class ImapMailService {
               if (code) {
                 clearTimeout(timeoutId)
                 imap.addFlags([msgId], ['\\Seen', '\\Deleted'], () => {
-                  imap.expunge(() => {
-                    imap.end()
-                    resolve(code)
+                  this.purgeWelcomeToRefMails(imap, () => {
+                    imap.expunge(() => {
+                      imap.end()
+                      resolve(code)
+                    })
                   })
                 })
                 return
@@ -371,9 +387,13 @@ export class ImapMailService {
 
               if (link) {
                 clearTimeout(timeoutId)
-                imap.addFlags([msgId], ['\\Seen'], () => {
-                  imap.end()
-                  resolve(link)
+                imap.addFlags([msgId], ['\\Seen', '\\Deleted'], () => {
+                  this.purgeWelcomeToRefMails(imap, () => {
+                    imap.expunge(() => {
+                      imap.end()
+                      resolve(link)
+                    })
+                  })
                 })
                 return
               }

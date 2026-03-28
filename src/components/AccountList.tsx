@@ -9,16 +9,33 @@ import type { Account } from '../types'
 interface AccountListProps {
   accounts: Account[]
   setAccounts: React.Dispatch<React.SetStateAction<Account[]>>
-  onRefreshAccount?: (account: Account) => void
+  onRefreshAccount?: (account: Account) => void | Promise<void>
   onReloadAccounts?: () => Promise<void>
 }
 
+type RefCreditsLive = {
+  credits: number | null
+  error?: string
+  emailVerified?: boolean | null
+  verificationEmailSent?: boolean
+}
+
 function formatRefCreditsCell(
-  live: { credits: number | null; error?: string } | undefined,
+  live: RefCreditsLive | undefined,
   persisted?: number
 ) {
   const v = live?.credits ?? persisted
   return v != null ? v : '—'
+}
+
+function refCreditsVerifiedClass(
+  live: RefCreditsLive | undefined,
+  persistedVerified?: boolean
+): string {
+  const ev = live?.emailVerified !== undefined ? live.emailVerified : persistedVerified
+  if (ev === true) return 'text-emerald-600 dark:text-emerald-500'
+  if (ev === false) return 'text-red-600 dark:text-red-500'
+  return 'text-muted-foreground'
 }
 
 function formatCtx7RequestsCell(
@@ -127,14 +144,13 @@ export default function AccountList({
     message: string
     details?: string
   }>({ isOpen: false, success: false, message: '' })
-  const [refCreditsByAccount, setRefCreditsByAccount] = useState<
-    Record<number, { credits: number | null; error?: string }>
-  >({})
+  const [refCreditsByAccount, setRefCreditsByAccount] = useState<Record<number, RefCreditsLive>>({})
   const [ctx7RequestsByAccount, setCtx7RequestsByAccount] = useState<
     Record<number, { used: number | null; limit: number | null; error?: string }>
   >({})
   const [usageRefreshLoading, setUsageRefreshLoading] = useState(false)
   const [singleRefreshLoading, setSingleRefreshLoading] = useState<Set<number>>(new Set())
+  const [inlineRegisterLoading, setInlineRegisterLoading] = useState<Set<number>>(new Set())
 
   const itemsPerPage = 10
 
@@ -185,7 +201,11 @@ export default function AccountList({
           setRefCreditsByAccount(prev => {
             const next = { ...prev }
             for (const [idStr, r] of Object.entries(refRes.results)) {
-              next[Number(idStr)] = { credits: r.credits, error: r.error }
+              next[Number(idStr)] = {
+                credits: r.credits,
+                error: r.error,
+                emailVerified: r.emailVerified
+              }
             }
             return next
           })
@@ -238,32 +258,30 @@ export default function AccountList({
   const handleSingleUsageRefresh = useCallback(
     async (account: Account) => {
       const api = window.electronAPI
-      if (!api || singleRefreshLoading.has(account.id)) return
+      if (!api || singleRefreshLoading.has(account.id) || !account.refApiKey) return
       setSingleRefreshLoading(prev => new Set(prev).add(account.id))
       try {
-        const refP =
-          account.refApiKey && api.fetchRefCredits
-            ? api.fetchRefCredits(account.id)
-            : Promise.resolve(undefined)
-        const ctxP =
-          account.apiKey && api.fetchContext7Requests
-            ? api.fetchContext7Requests(account.id)
-            : Promise.resolve(undefined)
-        const [refR, ctxR] = await Promise.all([refP, ctxP])
+        const refR = await api.fetchRefCredits(account.id, {
+          resendVerificationIfUnverified: true
+        })
         await onReloadAccounts?.()
         setRefCreditsByAccount(prev => {
           const next = { ...prev }
-          if (refR) {
-            if (refR.credits !== null) delete next[account.id]
-            else next[account.id] = { credits: refR.credits, error: refR.error }
-          }
-          return next
-        })
-        setCtx7RequestsByAccount(prev => {
-          const next = { ...prev }
-          if (ctxR) {
-            if (ctxR.used !== null && ctxR.limit !== null) delete next[account.id]
-            else next[account.id] = { used: ctxR.used, limit: ctxR.limit, error: ctxR.error }
+          if (refR.credits !== null) {
+            if (refR.verificationEmailSent) {
+              next[account.id] = {
+                credits: refR.credits,
+                emailVerified: refR.emailVerified,
+                verificationEmailSent: true
+              }
+            } else delete next[account.id]
+          } else {
+            next[account.id] = {
+              credits: refR.credits,
+              error: refR.error,
+              emailVerified: refR.emailVerified,
+              verificationEmailSent: refR.verificationEmailSent
+            }
           }
           return next
         })
@@ -605,10 +623,20 @@ export default function AccountList({
                               )}
                             </motion.button>
                           </div>
-                          <span className="text-xs text-muted-foreground tabular-nums">
-                            Available Credits:{' '}
-                            {formatRefCreditsCell(refCreditsByAccount[account.id], account.refCredits)}
+                          <span className="text-xs tabular-nums">
+                            <span className="text-muted-foreground">Available Credits: </span>
+                            <span
+                              className={`font-medium ${refCreditsVerifiedClass(
+                                refCreditsByAccount[account.id],
+                                account.refEmailVerified
+                              )}`}
+                            >
+                              {formatRefCreditsCell(refCreditsByAccount[account.id], account.refCredits)}
+                            </span>
                           </span>
+                          {refCreditsByAccount[account.id]?.verificationEmailSent ? (
+                            <span className="text-xs text-muted-foreground">已尝试发送验证邮件</span>
+                          ) : null}
                           {refCreditsByAccount[account.id]?.error ? (
                             <span
                               className="text-xs text-amber-600 dark:text-amber-500 max-w-[160px] leading-tight"
@@ -632,21 +660,50 @@ export default function AccountList({
                             if (account.apiKey && account.refApiKey) {
                               void handleSingleUsageRefresh(account)
                             } else {
-                              onRefreshAccount?.(account)
+                              void (async () => {
+                                if (!onRefreshAccount) return
+                                if (inlineRegisterLoading.has(account.id)) return
+                                setInlineRegisterLoading(prev => new Set(prev).add(account.id))
+                                try {
+                                  await onRefreshAccount(account)
+                                } finally {
+                                  setInlineRegisterLoading(prev => {
+                                    const next = new Set(prev)
+                                    next.delete(account.id)
+                                    return next
+                                  })
+                                }
+                              })()
                             }
                           }}
-                          disabled={singleRefreshLoading.has(account.id)}
+                          disabled={
+                            singleRefreshLoading.has(account.id) ||
+                            inlineRegisterLoading.has(account.id)
+                          }
                           whileHover={{ scale: 1.1 }}
                           whileTap={{ scale: 0.9 }}
                           className="p-1.5 rounded text-primary bg-primary/10 hover:bg-primary/20 transition-colors cursor-pointer disabled:opacity-50"
                           title={
-                            account.apiKey && account.refApiKey ? '刷新额度'
-                            : account.apiKey ? '注册 Ref API'
-                            : account.refApiKey ? '注册 Context7'
-                            : '注册 Context7 + Ref'
+                            account.apiKey && account.refApiKey
+                              ? account.refEmailVerified === false
+                                ? '刷新 Ref（未验证时将重发验证邮件）'
+                                : '刷新 Ref 额度'
+                              : account.apiKey
+                                ? '补充 Ref（直接走验证流程）'
+                                : account.refApiKey
+                                  ? '补充 Context7'
+                                  : '补充 Context7（先绑 Context7）'
                           }
                         >
-                          <RefreshCw size={16} className={singleRefreshLoading.has(account.id) ? 'animate-spin' : ''} />
+                          <RefreshCw
+                            size={16}
+                            className={
+                              singleRefreshLoading.has(account.id) ||
+                              inlineRegisterLoading.has(account.id)
+                                ? 'animate-spin'
+                                : ''
+                            }
+                          />
                         </motion.button>
                         <motion.button
                           onClick={() => handleSingleDelete(account.id)}

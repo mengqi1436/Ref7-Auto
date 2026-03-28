@@ -38,17 +38,6 @@ function App() {
     setCurrentPage(page)
   }, [])
 
-  const handleRefreshAccount = useCallback((account: Account) => {
-    if (account.apiKey && account.refApiKey) return
-    if (!account.apiKey) {
-      setCtx7AccountToRegister(account)
-      setCurrentPage('register')
-    } else {
-      setRefAccountToRegister(account)
-      setCurrentPage('register')
-    }
-  }, [])
-
   const addNotification = useCallback((type: NotificationType, message: string) => {
     const notification: NotificationItem = {
       id: Date.now().toString() + Math.random().toString(36).slice(2),
@@ -139,6 +128,47 @@ function App() {
       setAccounts([])
     }
   }, [])
+
+  const handleRefreshAccount = useCallback(
+    async (account: Account) => {
+      if (account.apiKey && account.refApiKey) return
+      const api = window.electronAPI
+      if (!api) return
+      const showBrowser = settings?.registration.showBrowser ?? false
+      try {
+        if (!account.apiKey) {
+          const r = await api.startContext7Registration({
+            accountId: account.id,
+            email: account.email,
+            password: account.password,
+            emailType: account.emailType,
+            showBrowser
+          })
+          if (r.success) {
+            addNotification('success', `Context7 已绑定：${account.email}`)
+          } else {
+            addNotification('error', r.error || 'Context7 注册失败')
+          }
+        } else {
+          const r = await api.startRefRegistration({
+            accountId: account.id,
+            email: account.email,
+            password: account.password,
+            showBrowser
+          })
+          if (r.success) {
+            addNotification('success', `Ref API 已完成验证流程：${account.email}`)
+          } else {
+            addNotification('error', r.error || 'Ref 验证流程失败')
+          }
+        }
+        await loadAccounts()
+      } catch (e) {
+        addNotification('error', e instanceof Error ? e.message : '操作失败')
+      }
+    },
+    [settings, addNotification, loadAccounts]
+  )
 
   useEffect(() => {
     void loadSettings()

@@ -18,6 +18,8 @@ interface Account {
   refApiKey?: string
   refCredits?: number
   refCreditsUpdatedAt?: string
+  refEmailVerified?: boolean
+  refEmailVerifiedUpdatedAt?: string
   ctx7RequestsUsed?: number
   ctx7RequestsLimit?: number
   ctx7RequestsUpdatedAt?: string
@@ -68,6 +70,8 @@ interface RefRegistrationResult {
 
 interface RefCreditsFetchResult {
   credits: number | null
+  emailVerified?: boolean | null
+  verificationEmailSent?: boolean
   error?: string
 }
 
@@ -138,8 +142,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('accounts:updateStatus', id, status),
   updateAccountRefApiKey: (id: number, refApiKey: string): Promise<void> =>
     ipcRenderer.invoke('accounts:updateRefApiKey', id, refApiKey),
-  fetchRefCredits: (accountId: number): Promise<RefCreditsFetchResult> =>
-    ipcRenderer.invoke('accounts:fetchRefCredits', accountId),
+  fetchRefCredits: (
+    accountId: number,
+    options?: { resendVerificationIfUnverified?: boolean }
+  ): Promise<RefCreditsFetchResult> =>
+    ipcRenderer.invoke('accounts:fetchRefCredits', accountId, options),
   fetchRefCreditsAll: (): Promise<RefCreditsAllResponse> =>
     ipcRenderer.invoke('accounts:fetchRefCreditsAll'),
   fetchContext7Requests: (accountId: number): Promise<Context7RequestsFetchResult> =>

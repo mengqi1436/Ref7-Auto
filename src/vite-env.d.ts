@@ -51,7 +51,10 @@ interface ElectronAPI {
   deleteAccounts: (ids: number[]) => Promise<void>
   updateAccountStatus: (id: number, status: AccountStatus) => Promise<void>
   updateAccountRefApiKey: (id: number, refApiKey: string) => Promise<void>
-  fetchRefCredits: (accountId: number) => Promise<RefCreditsFetchResult>
+  fetchRefCredits: (
+    accountId: number,
+    options?: { resendVerificationIfUnverified?: boolean }
+  ) => Promise<RefCreditsFetchResult>
   fetchRefCreditsAll: () => Promise<RefCreditsAllResponse>
   fetchContext7Requests: (accountId: number) => Promise<Context7RequestsFetchResult>
   fetchContext7RequestsAll: () => Promise<Context7RequestsAllResponse>

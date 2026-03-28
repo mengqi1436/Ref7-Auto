@@ -11,6 +11,8 @@ export interface Account {
   refApiKey?: string
   refCredits?: number
   refCreditsUpdatedAt?: string
+  refEmailVerified?: boolean
+  refEmailVerifiedUpdatedAt?: string
   ctx7RequestsUsed?: number
   ctx7RequestsLimit?: number
   ctx7RequestsUpdatedAt?: string
@@ -65,6 +67,8 @@ export interface Context7RegistrationResult {
 
 export interface RefCreditsFetchResult {
   credits: number | null
+  emailVerified?: boolean | null
+  verificationEmailSent?: boolean
   error?: string
 }
 
