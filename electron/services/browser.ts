@@ -44,8 +44,6 @@ export interface Context7ApiKeyResult {
   success: boolean
   apiKey?: string
   keyName?: string
-  requestsUsed?: number
-  requestsLimit?: number
 }
 
 let browser: PuppeteerBrowser | null = null
@@ -362,15 +360,6 @@ export async function createContext7ApiKey(options: BrowserServiceOptions): Prom
     options.onLog('info', 'Dashboard 页面加载中...')
     await delay(3000)
 
-    const quotaInfo = await page.evaluate(() => {
-      const text = document.body.innerText
-      const match = text.match(/(\d+)\/(\d+,?\d*)/)
-      return match
-        ? { used: parseInt(match[1]), limit: parseInt(match[2].replace(',', '')) }
-        : { used: 0, limit: 1000 }
-    })
-
-    options.onLog('info', `API 配额: ${quotaInfo.used}/${quotaInfo.limit}`)
     options.onLog('info', '查找 Create API Key 按钮...')
 
     const createButtonClicked = await page.evaluate(() => {
@@ -445,11 +434,11 @@ export async function createContext7ApiKey(options: BrowserServiceOptions): Prom
 
     if (apiKeyResult) {
       options.onLog('success', `API Key 获取成功: ${apiKeyResult.slice(0, 12)}****`)
-      return { success: true, apiKey: apiKeyResult, keyName, ...quotaInfo }
+      return { success: true, apiKey: apiKeyResult, keyName }
     }
 
     options.onLog('warning', '未能获取到完整的 API Key')
-    return { success: true, keyName, ...quotaInfo }
+    return { success: true, keyName }
   } catch (error: unknown) {
     options.onLog('error', `获取 API Key 出错: ${getErrorMessage(error)}`)
     return { success: false }

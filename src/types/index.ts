@@ -9,6 +9,11 @@ export interface Account {
   apiKeyName?: string
   requestsLimit?: number
   refApiKey?: string
+  refCredits?: number
+  refCreditsUpdatedAt?: string
+  ctx7RequestsUsed?: number
+  ctx7RequestsLimit?: number
+  ctx7RequestsUpdatedAt?: string
 }
 
 export type AccountStatus = 'active' | 'pending' | 'invalid'
@@ -34,6 +39,8 @@ export interface RefRegistrationConfig {
 export interface RefRegistrationResult {
   success: boolean
   refApiKey?: string
+  refCredits?: number
+  refCreditsUpdatedAt?: string
   error?: string
 }
 
@@ -50,6 +57,9 @@ export interface Context7RegistrationResult {
   apiKey?: string
   apiKeyName?: string
   requestsLimit?: number
+  ctx7RequestsUsed?: number
+  ctx7RequestsLimit?: number
+  ctx7RequestsUpdatedAt?: string
   error?: string
 }
 

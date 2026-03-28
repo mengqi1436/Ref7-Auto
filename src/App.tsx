@@ -102,29 +102,7 @@ function App() {
     }
   }, [settings?.defaultEmailType])
 
-  useEffect(() => {
-    loadSettings()
-    loadAccounts()
-    
-    const unsubLog = window.electronAPI?.onRegistrationLog?.((log) => setLogs(prev => [...prev, log]))
-    
-    const unsubComplete = window.electronAPI?.onRegistrationComplete?.((account) => {
-      setAccounts(prev => [account, ...prev])
-      addNotification('success', `账户 ${account.email} 注册成功！`)
-    })
-    
-    const unsubError = window.electronAPI?.onRegistrationError?.((error) => {
-      addNotification('error', error)
-    })
-    
-    return () => {
-      unsubLog?.()
-      unsubComplete?.()
-      unsubError?.()
-    }
-  }, [addNotification])
-
-  const loadSettings = async () => {
+  const loadSettings = useCallback(async () => {
     const defaultSettings: AppSettings = {
       tempMailPlus: { username: '', epin: '', extension: '@mailto.plus' },
       imapMail: { server: 'imap.qq.com', port: 993, user: '', pass: '', dir: 'INBOX', protocol: 'IMAP', domain: '' },
@@ -132,7 +110,6 @@ function App() {
       defaultEmailType: 'tempmail_plus',
       theme: 'system'
     }
-    
     try {
       const s = await window.electronAPI?.getSettings?.()
       if (s) {
@@ -152,16 +129,34 @@ function App() {
     } catch {
       setSettings(defaultSettings)
     }
-  }
+  }, [])
 
-  const loadAccounts = async () => {
+  const loadAccounts = useCallback(async () => {
     try {
       const accs = await window.electronAPI?.getAccounts?.()
       if (accs) setAccounts(accs)
     } catch {
       setAccounts([])
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    void loadSettings()
+    void loadAccounts()
+    const unsubLog = window.electronAPI?.onRegistrationLog?.((log) => setLogs(prev => [...prev, log]))
+    const unsubComplete = window.electronAPI?.onRegistrationComplete?.((account) => {
+      setAccounts(prev => [account, ...prev])
+      addNotification('success', `账户 ${account.email} 注册成功！`)
+    })
+    const unsubError = window.electronAPI?.onRegistrationError?.((error) => {
+      addNotification('error', error)
+    })
+    return () => {
+      unsubLog?.()
+      unsubComplete?.()
+      unsubError?.()
+    }
+  }, [addNotification, loadSettings, loadAccounts])
 
   const cycleTheme = useCallback(() => {
     setTheme(prev => prev === 'system' ? 'light' : prev === 'light' ? 'dark' : 'system')
@@ -193,7 +188,14 @@ function App() {
         case 'dashboard':
           return <Dashboard accounts={accounts} logs={logs} isRegistering={isRegistering} onNavigate={handleNavigate} />
         case 'accounts':
-          return <AccountList accounts={accounts} setAccounts={setAccounts} onRefreshAccount={handleRefreshAccount} />
+          return (
+            <AccountList
+              accounts={accounts}
+              setAccounts={setAccounts}
+              onRefreshAccount={handleRefreshAccount}
+              onReloadAccounts={loadAccounts}
+            />
+          )
         case 'register':
           return <RegisterPanel settings={settings} isRegistering={isRegistering} setIsRegistering={setIsRegistering} logs={logs} setLogs={setLogs} defaultEmailType={defaultEmailType} refAccountToRegister={refAccountToRegister} setRefAccountToRegister={setRefAccountToRegister} ctx7AccountToRegister={ctx7AccountToRegister} setCtx7AccountToRegister={setCtx7AccountToRegister} setAccounts={setAccounts} />
         case 'settings':

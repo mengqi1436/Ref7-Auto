@@ -10,6 +10,27 @@ interface AccountListProps {
   accounts: Account[]
   setAccounts: React.Dispatch<React.SetStateAction<Account[]>>
   onRefreshAccount?: (account: Account) => void
+  onReloadAccounts?: () => Promise<void>
+}
+
+function formatRefCreditsCell(
+  live: { credits: number | null; error?: string } | undefined,
+  persisted?: number
+) {
+  const v = live?.credits ?? persisted
+  return v != null ? v : '—'
+}
+
+function formatCtx7RequestsCell(
+  live: { used: number | null; limit: number | null; error?: string } | undefined,
+  persistedUsed?: number,
+  persistedLimit?: number
+) {
+  const u = live?.used ?? persistedUsed
+  const l = live?.limit ?? persistedLimit
+  return u != null && l != null
+    ? `${u.toLocaleString('en-US')} / ${l.toLocaleString('en-US')}`
+    : '—'
 }
 
 function ConfirmModal({ 
@@ -84,7 +105,12 @@ function ConfirmModal({
   )
 }
 
-export default function AccountList({ accounts, setAccounts, onRefreshAccount }: AccountListProps) {
+export default function AccountList({
+  accounts,
+  setAccounts,
+  onRefreshAccount,
+  onReloadAccounts
+}: AccountListProps) {
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedIds, setSelectedIds] = useState<number[]>([])
   const [showPasswords, setShowPasswords] = useState<Record<number, boolean>>({})
@@ -138,88 +164,119 @@ export default function AccountList({ accounts, setAccounts, onRefreshAccount }:
     if (!needRef && !needCtx7) return
     setUsageRefreshLoading(true)
     try {
-      const tasks: Promise<void>[] = []
-      if (needRef && api.fetchRefCreditsAll) {
-        tasks.push(
-          api.fetchRefCreditsAll().then(({ results, error }) => {
-            if (error) {
-              setRefCreditsByAccount(prev => {
-                const next = { ...prev }
-                for (const a of accounts) {
-                  if (a.refApiKey) next[a.id] = { credits: null, error }
-                }
-                return next
-              })
-              return
+      const refP =
+        needRef && api.fetchRefCreditsAll ? api.fetchRefCreditsAll() : Promise.resolve(null)
+      const ctxP =
+        needCtx7 && api.fetchContext7RequestsAll
+          ? api.fetchContext7RequestsAll()
+          : Promise.resolve(null)
+      const [refRes, ctxRes] = await Promise.all([refP, ctxP])
+
+      if (refRes) {
+        if (refRes.error) {
+          setRefCreditsByAccount(prev => {
+            const next = { ...prev }
+            for (const a of accounts) {
+              if (a.refApiKey) next[a.id] = { credits: null, error: refRes.error }
             }
-            setRefCreditsByAccount(prev => {
-              const next = { ...prev }
-              for (const [idStr, r] of Object.entries(results)) {
-                next[Number(idStr)] = { credits: r.credits, error: r.error }
-              }
-              return next
-            })
+            return next
           })
-        )
-      }
-      if (needCtx7 && api.fetchContext7RequestsAll) {
-        tasks.push(
-          api.fetchContext7RequestsAll().then(({ results, error }) => {
-            if (error) {
-              setCtx7RequestsByAccount(prev => {
-                const next = { ...prev }
-                for (const a of accounts) {
-                  if (a.apiKey) next[a.id] = { used: null, limit: null, error }
-                }
-                return next
-              })
-              return
+        } else {
+          setRefCreditsByAccount(prev => {
+            const next = { ...prev }
+            for (const [idStr, r] of Object.entries(refRes.results)) {
+              next[Number(idStr)] = { credits: r.credits, error: r.error }
             }
-            setCtx7RequestsByAccount(prev => {
-              const next = { ...prev }
-              for (const [idStr, r] of Object.entries(results)) {
-                next[Number(idStr)] = { used: r.used, limit: r.limit, error: r.error }
-              }
-              return next
-            })
+            return next
           })
-        )
+        }
       }
-      await Promise.all(tasks)
+      if (ctxRes) {
+        if (ctxRes.error) {
+          setCtx7RequestsByAccount(prev => {
+            const next = { ...prev }
+            for (const a of accounts) {
+              if (a.apiKey) next[a.id] = { used: null, limit: null, error: ctxRes.error }
+            }
+            return next
+          })
+        } else {
+          setCtx7RequestsByAccount(prev => {
+            const next = { ...prev }
+            for (const [idStr, r] of Object.entries(ctxRes.results)) {
+              next[Number(idStr)] = { used: r.used, limit: r.limit, error: r.error }
+            }
+            return next
+          })
+        }
+      }
+
+      await onReloadAccounts?.()
+      if (refRes && !refRes.error) {
+        setRefCreditsByAccount(prev => {
+          const next = { ...prev }
+          for (const [idStr, r] of Object.entries(refRes.results)) {
+            if (r.credits !== null) delete next[Number(idStr)]
+          }
+          return next
+        })
+      }
+      if (ctxRes && !ctxRes.error) {
+        setCtx7RequestsByAccount(prev => {
+          const next = { ...prev }
+          for (const [idStr, r] of Object.entries(ctxRes.results)) {
+            if (r.used !== null && r.limit !== null) delete next[Number(idStr)]
+          }
+          return next
+        })
+      }
     } finally {
       setUsageRefreshLoading(false)
     }
-  }, [accounts, usageRefreshLoading])
+  }, [accounts, usageRefreshLoading, onReloadAccounts])
 
-  const handleSingleUsageRefresh = useCallback(async (account: Account) => {
-    const api = window.electronAPI
-    if (!api || singleRefreshLoading.has(account.id)) return
-    setSingleRefreshLoading(prev => new Set(prev).add(account.id))
-    try {
-      const tasks: Promise<void>[] = []
-      if (account.refApiKey && api.fetchRefCredits) {
-        tasks.push(
-          api.fetchRefCredits(account.id).then(r => {
-            setRefCreditsByAccount(prev => ({ ...prev, [account.id]: { credits: r.credits, error: r.error } }))
-          })
-        )
+  const handleSingleUsageRefresh = useCallback(
+    async (account: Account) => {
+      const api = window.electronAPI
+      if (!api || singleRefreshLoading.has(account.id)) return
+      setSingleRefreshLoading(prev => new Set(prev).add(account.id))
+      try {
+        const refP =
+          account.refApiKey && api.fetchRefCredits
+            ? api.fetchRefCredits(account.id)
+            : Promise.resolve(undefined)
+        const ctxP =
+          account.apiKey && api.fetchContext7Requests
+            ? api.fetchContext7Requests(account.id)
+            : Promise.resolve(undefined)
+        const [refR, ctxR] = await Promise.all([refP, ctxP])
+        await onReloadAccounts?.()
+        setRefCreditsByAccount(prev => {
+          const next = { ...prev }
+          if (refR) {
+            if (refR.credits !== null) delete next[account.id]
+            else next[account.id] = { credits: refR.credits, error: refR.error }
+          }
+          return next
+        })
+        setCtx7RequestsByAccount(prev => {
+          const next = { ...prev }
+          if (ctxR) {
+            if (ctxR.used !== null && ctxR.limit !== null) delete next[account.id]
+            else next[account.id] = { used: ctxR.used, limit: ctxR.limit, error: ctxR.error }
+          }
+          return next
+        })
+      } finally {
+        setSingleRefreshLoading(prev => {
+          const next = new Set(prev)
+          next.delete(account.id)
+          return next
+        })
       }
-      if (account.apiKey && api.fetchContext7Requests) {
-        tasks.push(
-          api.fetchContext7Requests(account.id).then(r => {
-            setCtx7RequestsByAccount(prev => ({ ...prev, [account.id]: { used: r.used, limit: r.limit, error: r.error } }))
-          })
-        )
-      }
-      await Promise.all(tasks)
-    } finally {
-      setSingleRefreshLoading(prev => {
-        const next = new Set(prev)
-        next.delete(account.id)
-        return next
-      })
-    }
-  }, [singleRefreshLoading])
+    },
+    [singleRefreshLoading, onReloadAccounts]
+  )
 
   const toggleSelectAll = useCallback(() => {
     setSelectedIds(prev => 
@@ -510,10 +567,7 @@ export default function AccountList({ accounts, setAccounts, onRefreshAccount }:
                           </div>
                           <span className="text-xs text-muted-foreground tabular-nums">
                             Requests:{' '}
-                            {ctx7RequestsByAccount[account.id]?.used != null &&
-                            ctx7RequestsByAccount[account.id]?.limit != null
-                              ? `${ctx7RequestsByAccount[account.id]!.used!.toLocaleString('en-US')} / ${ctx7RequestsByAccount[account.id]!.limit!.toLocaleString('en-US')}`
-                              : '—'}
+                            {formatCtx7RequestsCell(ctx7RequestsByAccount[account.id], account.ctx7RequestsUsed, account.ctx7RequestsLimit)}
                           </span>
                           {ctx7RequestsByAccount[account.id]?.error ? (
                             <span
@@ -553,7 +607,7 @@ export default function AccountList({ accounts, setAccounts, onRefreshAccount }:
                           </div>
                           <span className="text-xs text-muted-foreground tabular-nums">
                             Available Credits:{' '}
-                            {refCreditsByAccount[account.id]?.credits ?? '—'}
+                            {formatRefCreditsCell(refCreditsByAccount[account.id], account.refCredits)}
                           </span>
                           {refCreditsByAccount[account.id]?.error ? (
                             <span

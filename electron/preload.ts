@@ -16,6 +16,11 @@ interface Account {
   apiKeyName?: string
   requestsLimit?: number
   refApiKey?: string
+  refCredits?: number
+  refCreditsUpdatedAt?: string
+  ctx7RequestsUsed?: number
+  ctx7RequestsLimit?: number
+  ctx7RequestsUpdatedAt?: string
 }
 
 interface RegistrationConfig {
@@ -47,12 +52,17 @@ interface Context7RegistrationResult {
   apiKey?: string
   apiKeyName?: string
   requestsLimit?: number
+  ctx7RequestsUsed?: number
+  ctx7RequestsLimit?: number
+  ctx7RequestsUpdatedAt?: string
   error?: string
 }
 
 interface RefRegistrationResult {
   success: boolean
   refApiKey?: string
+  refCredits?: number
+  refCreditsUpdatedAt?: string
   error?: string
 }
 

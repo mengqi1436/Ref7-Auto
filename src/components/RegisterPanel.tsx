@@ -1,6 +1,17 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { motion } from 'framer-motion'
-import { Play, Square, Mail, Settings2, Monitor, Activity, Zap, Globe, RefreshCw, X } from 'lucide-react'
+import {
+  Play,
+  Square,
+  Mail,
+  Settings2,
+  Monitor,
+  Activity,
+  Zap,
+  Globe,
+  RefreshCw,
+  X,
+} from 'lucide-react'
 import type { AppSettings, LogEntry, EmailType, Account } from '../types'
 
 interface RegisterPanelProps {
@@ -13,7 +24,9 @@ interface RegisterPanelProps {
   refAccountToRegister?: Account | null
   setRefAccountToRegister?: React.Dispatch<React.SetStateAction<Account | null>>
   ctx7AccountToRegister?: Account | null
-  setCtx7AccountToRegister?: React.Dispatch<React.SetStateAction<Account | null>>
+  setCtx7AccountToRegister?: React.Dispatch<
+    React.SetStateAction<Account | null>
+  >
   setAccounts?: React.Dispatch<React.SetStateAction<Account[]>>
 }
 
@@ -21,12 +34,43 @@ const LOG_STYLES: Record<LogEntry['type'], string> = {
   error: 'bg-destructive/10 text-destructive border-l-2 border-destructive',
   success: 'bg-emerald-500/10 text-emerald-500 border-l-2 border-emerald-500',
   warning: 'bg-accent/10 text-accent border-l-2 border-accent',
-  info: 'text-foreground border-l-2 border-primary/30'
+  info: 'text-foreground border-l-2 border-primary/30',
 }
 
-export default function RegisterPanel({ 
-  settings, 
-  isRegistering, 
+function validateSupplementalMailSettings(
+  settings: AppSettings | null,
+  emailType: EmailType,
+): string | null {
+  if (!settings) return '请先配置邮箱设置'
+  if (emailType === 'tempmail_plus' && !settings.tempMailPlus.username) {
+    return '请先在设置中配置 TempMail.Plus（须与注册该账户时收信方式一致）'
+  }
+  if (
+    emailType === 'imap' &&
+    (!settings.imapMail.user || !settings.imapMail.domain)
+  ) {
+    return '请先在设置中配置 IMAP 邮箱与域名（须与注册该账户时一致）'
+  }
+  return null
+}
+
+function emailServiceCardClassName(
+  isSelected: boolean,
+  type: EmailType,
+): string {
+  const base =
+    'flex flex-col items-center justify-center gap-2 p-5 rounded-xl border transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed'
+  if (type === 'tempmail_plus') {
+    if (isSelected) return `${base} bg-primary/10 border-primary text-primary`
+    return `${base} bg-background border-border/50 hover:bg-secondary/50 hover:border-primary/50`
+  }
+  if (isSelected) return `${base} bg-accent/10 border-accent text-accent`
+  return `${base} bg-background border-border/50 hover:bg-secondary/50 hover:border-accent/50`
+}
+
+export default function RegisterPanel({
+  settings,
+  isRegistering,
   setIsRegistering,
   logs,
   setLogs,
@@ -35,11 +79,15 @@ export default function RegisterPanel({
   setRefAccountToRegister,
   ctx7AccountToRegister,
   setCtx7AccountToRegister,
-  setAccounts
+  setAccounts,
 }: RegisterPanelProps) {
   const [emailType, setEmailType] = useState<EmailType>(defaultEmailType)
-  const [batchCount, setBatchCount] = useState(settings?.registration.defaultBatchCount ?? 1)
-  const [showBrowser, setShowBrowser] = useState(settings?.registration.showBrowser ?? false)
+  const [batchCount, setBatchCount] = useState(
+    settings?.registration.defaultBatchCount ?? 1,
+  )
+  const [showBrowser, setShowBrowser] = useState(
+    settings?.registration.showBrowser ?? false,
+  )
   const logsEndRef = useRef<HTMLDivElement>(null)
   const isRunningRef = useRef(false)
 
@@ -47,40 +95,112 @@ export default function RegisterPanel({
   const isRefMode = !!refAccountToRegister
   const maxBatchCount = settings?.registration.maxBatchCount ?? 20
 
-  useEffect(() => { setEmailType(defaultEmailType) }, [defaultEmailType])
-  useEffect(() => { 
-    if (settings?.registration.defaultBatchCount !== undefined) 
-      setBatchCount(settings.registration.defaultBatchCount) 
+  useEffect(() => {
+    setEmailType(defaultEmailType)
+  }, [defaultEmailType])
+  useEffect(() => {
+    if (settings?.registration.defaultBatchCount !== undefined)
+      setBatchCount(settings.registration.defaultBatchCount)
   }, [settings?.registration.defaultBatchCount])
-  useEffect(() => { 
-    if (settings?.registration.showBrowser !== undefined) 
-      setShowBrowser(settings.registration.showBrowser) 
+  useEffect(() => {
+    if (settings?.registration.showBrowser !== undefined)
+      setShowBrowser(settings.registration.showBrowser)
   }, [settings?.registration.showBrowser])
-  useEffect(() => { isRunningRef.current = isRegistering }, [isRegistering])
-  useEffect(() => { logsEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [logs])
+  useEffect(() => {
+    isRunningRef.current = isRegistering
+  }, [isRegistering])
+  useEffect(() => {
+    logsEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [logs])
 
-  const addLog = useCallback((type: LogEntry['type'], message: string) => {
-    setLogs(prev => [...prev, {
-      id: Date.now().toString(),
-      timestamp: new Date().toLocaleTimeString(),
-      type,
-      message
-    }])
-  }, [setLogs])
+  const addLog = useCallback(
+    (type: LogEntry['type'], message: string) => {
+      setLogs((prev) => [
+        ...prev,
+        {
+          id: Date.now().toString(),
+          timestamp: new Date().toLocaleTimeString(),
+          type,
+          message,
+        },
+      ])
+    },
+    [setLogs],
+  )
+
+  const runRefRegistrationForAccount = useCallback(
+    async (account: Account): Promise<boolean> => {
+      const mailErr = validateSupplementalMailSettings(settings, account.emailType)
+      if (mailErr) {
+        addLog('error', mailErr)
+        return false
+      }
+      addLog('info', `开始为账户 ${account.email} 注册 Ref API...`)
+      try {
+        const result = await window.electronAPI?.startRefRegistration?.({
+          accountId: account.id,
+          email: account.email,
+          password: account.password,
+          showBrowser,
+        })
+        if (result?.success && result.refApiKey) {
+          addLog('success', 'Ref API 注册成功！')
+          addLog('success', `API Key: ${result.refApiKey.slice(0, 12)}****`)
+          setAccounts?.((prev) =>
+            prev.map((acc) =>
+              acc.id === account.id
+                ? {
+                    ...acc,
+                    refApiKey: result.refApiKey,
+                    ...(result.refCredits != null
+                      ? {
+                          refCredits: result.refCredits,
+                          refCreditsUpdatedAt: result.refCreditsUpdatedAt,
+                        }
+                      : {}),
+                  }
+                : acc,
+            ),
+          )
+          setRefAccountToRegister?.(null)
+          return true
+        }
+        addLog('error', `Ref API 注册失败: ${result?.error || '未知错误'}`)
+        setRefAccountToRegister?.(account)
+        return false
+      } catch (error) {
+        addLog(
+          'error',
+          `Ref 注册失败: ${error instanceof Error ? error.message : '未知错误'}`,
+        )
+        setRefAccountToRegister?.(account)
+        return false
+      }
+    },
+    [settings, showBrowser, addLog, setAccounts, setRefAccountToRegister],
+  )
 
   const handleStart = useCallback(async () => {
-    if (!settings) { addLog('error', '请先配置邮箱设置'); return }
-    if (emailType === 'tempmail_plus' && !settings.tempMailPlus.username) { 
-      addLog('error', '请先配置 TempMail.Plus'); return 
+    if (!settings) {
+      addLog('error', '请先配置邮箱设置')
+      return
     }
-    if (emailType === 'imap' && (!settings.imapMail.user || !settings.imapMail.domain)) { 
-      addLog('error', '请先配置 IMAP 邮箱和域名'); return 
+    if (emailType === 'tempmail_plus' && !settings.tempMailPlus.username) {
+      addLog('error', '请先配置 TempMail.Plus')
+      return
+    }
+    if (
+      emailType === 'imap' &&
+      (!settings.imapMail.user || !settings.imapMail.domain)
+    ) {
+      addLog('error', '请先配置 IMAP 邮箱和域名')
+      return
     }
 
     setIsRegistering(true)
     isRunningRef.current = true
     addLog('info', `开始注册 ${batchCount} 个账户...`)
-    
+
     try {
       await window.electronAPI?.startRegistration?.({
         emailType,
@@ -88,7 +208,7 @@ export default function RegisterPanel({
         passwordLength: settings.registration.passwordLength,
         intervalMin: settings.registration.intervalMin,
         intervalMax: settings.registration.intervalMax,
-        showBrowser
+        showBrowser,
       })
     } catch (error) {
       console.error('注册启动失败:', error)
@@ -101,46 +221,36 @@ export default function RegisterPanel({
   const handleStop = useCallback(async () => {
     isRunningRef.current = false
     setIsRegistering(false)
-    try { await window.electronAPI?.stopRegistration?.() } 
-    catch (error) { console.error('停止注册失败:', error) }
+    try {
+      await window.electronAPI?.stopRegistration?.()
+    } catch (error) {
+      console.error('停止注册失败:', error)
+    }
     addLog('warning', '注册任务已停止')
   }, [setIsRegistering, addLog])
 
   const handleStartRefRegistration = useCallback(async () => {
     if (!refAccountToRegister) return
-
     setIsRegistering(true)
     isRunningRef.current = true
-    addLog('info', `开始为账户 ${refAccountToRegister.email} 注册 Ref API...`)
-
     try {
-      const result = await window.electronAPI?.startRefRegistration?.({
-        accountId: refAccountToRegister.id,
-        email: refAccountToRegister.email,
-        password: refAccountToRegister.password,
-        showBrowser
-      })
-
-      if (result?.success && result.refApiKey) {
-        addLog('success', 'Ref API 注册成功！')
-        addLog('success', `API Key: ${result.refApiKey.slice(0, 12)}****`)
-        setAccounts?.(prev => prev.map(acc => 
-          acc.id === refAccountToRegister.id ? { ...acc, refApiKey: result.refApiKey } : acc
-        ))
-        setRefAccountToRegister?.(null)
-      } else {
-        addLog('error', `Ref API 注册失败: ${result?.error || '未知错误'}`)
-      }
-    } catch (error) {
-      addLog('error', `Ref 注册失败: ${error instanceof Error ? error.message : '未知错误'}`)
+      await runRefRegistrationForAccount(refAccountToRegister)
     } finally {
       setIsRegistering(false)
       isRunningRef.current = false
     }
-  }, [refAccountToRegister, showBrowser, setIsRegistering, addLog, setRefAccountToRegister, setAccounts])
+  }, [refAccountToRegister, runRefRegistrationForAccount, setIsRegistering])
 
   const handleStartContext7Registration = useCallback(async () => {
     if (!ctx7AccountToRegister) return
+    const mailErr = validateSupplementalMailSettings(
+      settings,
+      ctx7AccountToRegister.emailType,
+    )
+    if (mailErr) {
+      addLog('error', mailErr)
+      return
+    }
 
     setIsRegistering(true)
     isRunningRef.current = true
@@ -152,43 +262,84 @@ export default function RegisterPanel({
         email: ctx7AccountToRegister.email,
         password: ctx7AccountToRegister.password,
         emailType: ctx7AccountToRegister.emailType,
-        showBrowser
+        showBrowser,
       })
 
       if (result?.success && result.apiKey) {
         addLog('success', 'Context7 注册成功！')
         addLog('success', `API Key: ${result.apiKey.slice(0, 12)}****`)
-        const updatedAccount = { ...ctx7AccountToRegister, apiKey: result.apiKey, apiKeyName: result.apiKeyName, requestsLimit: result.requestsLimit }
-        setAccounts?.(prev => prev.map(acc =>
-          acc.id === ctx7AccountToRegister.id ? { ...acc, apiKey: result.apiKey, apiKeyName: result.apiKeyName, requestsLimit: result.requestsLimit } : acc
-        ))
+        const updatedAccount = {
+          ...ctx7AccountToRegister,
+          apiKey: result.apiKey,
+          apiKeyName: result.apiKeyName,
+          requestsLimit: result.requestsLimit,
+          ...(result.ctx7RequestsUsed != null &&
+          result.ctx7RequestsLimit != null
+            ? {
+                ctx7RequestsUsed: result.ctx7RequestsUsed,
+                ctx7RequestsLimit: result.ctx7RequestsLimit,
+                ctx7RequestsUpdatedAt: result.ctx7RequestsUpdatedAt,
+              }
+            : {}),
+        }
+        setAccounts?.((prev) =>
+          prev.map((acc) =>
+            acc.id === ctx7AccountToRegister.id
+              ? { ...acc, ...updatedAccount }
+              : acc,
+          ),
+        )
         setCtx7AccountToRegister?.(null)
 
         if (!updatedAccount.refApiKey) {
-          addLog('info', '自动续接 Ref API 注册...')
-          setRefAccountToRegister?.(updatedAccount)
+          addLog('info', 'Context7 已完成，自动继续注册 Ref API...')
+          await runRefRegistrationForAccount(updatedAccount)
         }
       } else {
         addLog('error', `Context7 注册失败: ${result?.error || '未知错误'}`)
       }
     } catch (error) {
-      addLog('error', `Context7 注册失败: ${error instanceof Error ? error.message : '未知错误'}`)
+      addLog(
+        'error',
+        `Context7 注册失败: ${error instanceof Error ? error.message : '未知错误'}`,
+      )
     } finally {
       setIsRegistering(false)
       isRunningRef.current = false
     }
-  }, [ctx7AccountToRegister, showBrowser, setIsRegistering, addLog, setCtx7AccountToRegister, setRefAccountToRegister, setAccounts])
+  }, [
+    ctx7AccountToRegister,
+    settings,
+    showBrowser,
+    setIsRegistering,
+    addLog,
+    setCtx7AccountToRegister,
+    setRefAccountToRegister,
+    setAccounts,
+    runRefRegistrationForAccount,
+  ])
 
-  const ToggleSwitch = ({ active, color }: { active: boolean; color: string }) => (
+  const ToggleSwitch = ({
+    active,
+    color,
+    togglable,
+  }: {
+    active: boolean
+    color: string
+    togglable: boolean
+  }) => (
     <motion.button
-      onClick={() => setShowBrowser(!showBrowser)}
-      disabled={isRegistering}
-      whileTap={{ scale: 0.95 }}
-      className={`w-14 h-7 rounded-full transition-colors relative cursor-pointer ${
-        active ? color : 'bg-secondary'
-      } disabled:opacity-50 disabled:cursor-not-allowed`}
+      type="button"
+      onClick={() => {
+        if (togglable) setShowBrowser(!showBrowser)
+      }}
+      disabled={!togglable || isRegistering}
+      whileTap={{ scale: togglable ? 0.95 : 1 }}
+      className={`w-14 h-7 rounded-full transition-colors relative ${
+        togglable ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'
+      } ${active ? color : 'bg-secondary'} disabled:opacity-50 disabled:cursor-not-allowed`}
     >
-      <motion.span 
+      <motion.span
         className="absolute top-1 left-1 w-5 h-5 rounded-full bg-white shadow-md"
         animate={{ x: active ? 26 : 0 }}
         transition={{ type: 'spring', stiffness: 500, damping: 30 }}
@@ -196,9 +347,33 @@ export default function RegisterPanel({
     </motion.button>
   )
 
+  const supplementalMailHint = (account: Account) => (
+    <p className="text-xs text-muted-foreground pt-1">
+      收验证码 / Ref 验证邮件依赖设置中的邮箱服务，且须与该账户的收信方式（
+      {account.emailType === 'tempmail_plus' ? 'TempMail+' : 'IMAP'}
+      ）一致。
+    </p>
+  )
+
+  let startButtonClass =
+    'w-full flex items-center justify-center gap-3 p-5 rounded-xl font-semibold text-lg transition-all cursor-pointer bg-primary text-primary-foreground hover:bg-primary/90 shadow-neon'
+  let startButtonIcon = <Play size={22} fill="currentColor" />
+  let startButtonLabel = '启动任务'
+  if (isCtx7Mode) {
+    startButtonClass =
+      'w-full flex items-center justify-center gap-3 p-5 rounded-xl font-semibold text-lg transition-all cursor-pointer bg-primary text-primary-foreground hover:bg-primary/90 shadow-neon'
+    startButtonIcon = <Zap size={22} />
+    startButtonLabel = '开始 Context7 注册'
+  } else if (isRefMode) {
+    startButtonClass =
+      'w-full flex items-center justify-center gap-3 p-5 rounded-xl font-semibold text-lg transition-all cursor-pointer bg-accent text-accent-foreground hover:bg-accent/90 shadow-neon-accent'
+    startButtonIcon = <RefreshCw size={22} />
+    startButtonLabel = '开始 Ref 注册'
+  }
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[calc(100vh-10rem)]">
-      <motion.div 
+      <motion.div
         className="lg:col-span-1 space-y-5"
         initial={{ opacity: 0, x: -20 }}
         animate={{ opacity: 1, x: 0 }}
@@ -206,13 +381,25 @@ export default function RegisterPanel({
       >
         <div>
           <h2 className="text-3xl font-bold tracking-tight">
-            <span className={isCtx7Mode ? 'text-primary' : isRefMode ? 'text-accent' : 'text-primary'}>
+            <span
+              className={
+                isCtx7Mode
+                  ? 'text-primary'
+                  : isRefMode
+                    ? 'text-accent'
+                    : 'text-primary'
+              }
+            >
               {isCtx7Mode ? 'Context7' : isRefMode ? 'Ref' : '开始'}
             </span>
             {isCtx7Mode || isRefMode ? ' 注册' : '注册'}
           </h2>
           <p className="text-lg text-muted-foreground mt-1">
-            {isCtx7Mode ? '为已有账户注册 Context7 API' : isRefMode ? '为已有账户注册 Ref API' : '配置并运行自动化注册任务'}
+            {isCtx7Mode
+              ? '为已有账户注册 Context7 API'
+              : isRefMode
+                ? '为已有账户绑定 Ref API'
+                : '配置并运行自动化注册任务'}
           </p>
         </div>
 
@@ -225,6 +412,7 @@ export default function RegisterPanel({
                   Context7 注册
                 </h3>
                 <motion.button
+                  type="button"
                   onClick={() => setCtx7AccountToRegister?.(null)}
                   disabled={isRegistering}
                   whileHover={{ scale: 1.1 }}
@@ -238,16 +426,23 @@ export default function RegisterPanel({
               <div className="space-y-4">
                 <div className="p-4 rounded-xl bg-primary/5 border border-primary/20">
                   <p className="text-sm text-muted-foreground mb-1">目标账户</p>
-                  <p className="font-mono text-base font-medium">{ctx7AccountToRegister?.email}</p>
+                  <p className="font-mono text-base font-medium">
+                    {ctx7AccountToRegister?.email}
+                  </p>
+                  {ctx7AccountToRegister
+                    ? supplementalMailHint(ctx7AccountToRegister)
+                    : null}
                 </div>
                 <div className="text-sm text-muted-foreground space-y-2">
                   <p>将执行以下操作：</p>
                   <ol className="list-decimal list-inside space-y-1 ml-2">
-                    <li>访问 context7.com 注册页面</li>
-                    <li>使用账户邮箱和密码进行注册</li>
-                    <li>获取邮箱验证码并验证</li>
+                    <li>在浏览器中打开 Context7 注册流程</li>
+                    <li>使用账户邮箱与密码提交注册</li>
+                    <li>从邮箱读取验证码并完成验证</li>
                     <li>创建 Context7 API Key</li>
-                    {!ctx7AccountToRegister?.refApiKey && <li>完成后自动续接 Ref 注册</li>}
+                    {!ctx7AccountToRegister?.refApiKey && (
+                      <li>若无 Ref API，将在 Context7 成功后自动继续 Ref 注册</li>
+                    )}
                   </ol>
                 </div>
               </div>
@@ -258,9 +453,15 @@ export default function RegisterPanel({
                     <Monitor size={18} className="text-muted-foreground" />
                     <span className="text-base font-medium">调试模式</span>
                   </div>
-                  <p className="text-sm text-muted-foreground">显示浏览器窗口</p>
+                  <p className="text-sm text-muted-foreground">
+                    显示自动化浏览器窗口
+                  </p>
                 </div>
-                <ToggleSwitch active={showBrowser} color="bg-primary" />
+                <ToggleSwitch
+                  active={showBrowser}
+                  color="bg-primary"
+                  togglable={!isRegistering}
+                />
               </div>
             </div>
           ) : isRefMode ? (
@@ -271,6 +472,7 @@ export default function RegisterPanel({
                   Ref API 注册
                 </h3>
                 <motion.button
+                  type="button"
                   onClick={() => setRefAccountToRegister?.(null)}
                   disabled={isRegistering}
                   whileHover={{ scale: 1.1 }}
@@ -284,28 +486,42 @@ export default function RegisterPanel({
               <div className="space-y-4">
                 <div className="p-4 rounded-xl bg-accent/5 border border-accent/20">
                   <p className="text-sm text-muted-foreground mb-1">目标账户</p>
-                  <p className="font-mono text-base font-medium">{refAccountToRegister?.email}</p>
+                  <p className="font-mono text-base font-medium">
+                    {refAccountToRegister?.email}
+                  </p>
+                  {refAccountToRegister
+                    ? supplementalMailHint(refAccountToRegister)
+                    : null}
                 </div>
                 <div className="text-sm text-muted-foreground space-y-2">
-                  <p>将执行以下操作：</p>
+                  <p>
+                    将执行以下操作（主进程通过 Firebase / Ref 服务端
+                    API，非页面自动化）：
+                  </p>
                   <ol className="list-decimal list-inside space-y-1 ml-2">
-                    <li>访问 ref.tools/signup 注册页面</li>
-                    <li>使用账户邮箱和密码进行注册</li>
-                    <li>发送验证邮件并等待验证</li>
-                    <li>获取 Ref API Key</li>
+                    <li>使用邮箱与密码调用 Ref 注册接口</li>
+                    <li>发送验证邮件并从设置中的邮箱读取验证链接或代码</li>
+                    <li>完成邮箱验证并获取 Ref API Key</li>
                   </ol>
                 </div>
               </div>
 
               <div className="flex items-center justify-between pt-5 border-t border-border/50">
-                <div className="space-y-1">
+                <div className="space-y-1 max-w-[calc(100%-5rem)]">
                   <div className="flex items-center gap-2">
                     <Monitor size={18} className="text-muted-foreground" />
                     <span className="text-base font-medium">调试模式</span>
                   </div>
-                  <p className="text-sm text-muted-foreground">显示浏览器窗口</p>
+                  <p className="text-sm text-muted-foreground">
+                    Ref 补绑不使用浏览器窗口；此开关仅对 Context7
+                    与批量任务有效。
+                  </p>
                 </div>
-                <ToggleSwitch active={showBrowser} color="bg-accent" />
+                <ToggleSwitch
+                  active={showBrowser}
+                  color="bg-accent"
+                  togglable={false}
+                />
               </div>
             </div>
           ) : (
@@ -316,43 +532,62 @@ export default function RegisterPanel({
               </h3>
 
               <div className="space-y-3">
-                <label className="text-base font-medium text-muted-foreground">邮箱服务</label>
+                <label className="text-base font-medium text-muted-foreground">
+                  邮箱服务
+                </label>
                 <div className="grid grid-cols-2 gap-3">
-                  {[
-                    { type: 'tempmail_plus' as const, icon: Globe, label: 'TempMail+', sub: '临时邮箱', color: 'primary' },
-                    { type: 'imap' as const, icon: Mail, label: 'IMAP', sub: '自有域名', color: 'accent' }
-                  ].map(({ type, icon: Icon, label, sub, color }) => (
-                    <motion.button
-                      key={type}
-                      onClick={() => setEmailType(type)}
-                      disabled={isRegistering}
-                      whileHover={{ scale: 1.02 }}
-                      whileTap={{ scale: 0.98 }}
-                      className={`flex flex-col items-center justify-center gap-2 p-5 rounded-xl border transition-all cursor-pointer ${
-                        emailType === type
-                          ? `bg-${color}/10 border-${color} text-${color}`
-                          : `bg-background border-border/50 hover:bg-secondary/50 hover:border-${color}/50`
-                      } disabled:opacity-50 disabled:cursor-not-allowed`}
-                    >
-                      <Icon size={26} />
-                      <span className="text-base font-medium">{label}</span>
-                      <span className="text-xs text-muted-foreground">{sub}</span>
-                    </motion.button>
-                  ))}
+                  <motion.button
+                    type="button"
+                    onClick={() => setEmailType('tempmail_plus')}
+                    disabled={isRegistering}
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    className={emailServiceCardClassName(
+                      emailType === 'tempmail_plus',
+                      'tempmail_plus',
+                    )}
+                  >
+                    <Globe size={26} />
+                    <span className="text-base font-medium">TempMail+</span>
+                    <span className="text-xs text-muted-foreground">
+                      临时邮箱
+                    </span>
+                  </motion.button>
+                  <motion.button
+                    type="button"
+                    onClick={() => setEmailType('imap')}
+                    disabled={isRegistering}
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    className={emailServiceCardClassName(
+                      emailType === 'imap',
+                      'imap',
+                    )}
+                  >
+                    <Mail size={26} />
+                    <span className="text-base font-medium">IMAP</span>
+                    <span className="text-xs text-muted-foreground">
+                      自有域名
+                    </span>
+                  </motion.button>
                 </div>
               </div>
 
               <div className="space-y-4">
                 <div className="flex justify-between items-center">
-                  <label className="text-base font-medium text-muted-foreground">批量数量</label>
-                  <span className="text-2xl font-black text-primary font-numeric">{batchCount}</span>
+                  <label className="text-base font-medium text-muted-foreground">
+                    批量数量
+                  </label>
+                  <span className="text-2xl font-black text-primary font-numeric">
+                    {batchCount}
+                  </span>
                 </div>
                 <input
                   type="range"
                   min="1"
                   max={maxBatchCount}
                   value={Math.min(batchCount, maxBatchCount)}
-                  onChange={(e) => setBatchCount(parseInt(e.target.value))}
+                  onChange={(e) => setBatchCount(parseInt(e.target.value, 10))}
                   disabled={isRegistering}
                   className="w-full h-2 bg-secondary rounded-lg appearance-none cursor-pointer accent-primary disabled:opacity-50"
                 />
@@ -369,31 +604,39 @@ export default function RegisterPanel({
                     <Monitor size={18} className="text-muted-foreground" />
                     <span className="text-base font-medium">调试模式</span>
                   </div>
-                  <p className="text-sm text-muted-foreground">显示浏览器窗口</p>
+                  <p className="text-sm text-muted-foreground">
+                    显示浏览器窗口
+                  </p>
                 </div>
-                <ToggleSwitch active={showBrowser} color="bg-primary" />
+                <ToggleSwitch
+                  active={showBrowser}
+                  color="bg-primary"
+                  togglable={!isRegistering}
+                />
               </div>
             </div>
           )}
 
           {!isRegistering ? (
             <motion.button
-              onClick={isCtx7Mode ? handleStartContext7Registration : isRefMode ? handleStartRefRegistration : handleStart}
+              type="button"
+              onClick={
+                isCtx7Mode
+                  ? handleStartContext7Registration
+                  : isRefMode
+                    ? handleStartRefRegistration
+                    : handleStart
+              }
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
-              className={`w-full flex items-center justify-center gap-3 p-5 rounded-xl font-semibold text-lg transition-all cursor-pointer ${
-                isCtx7Mode
-                  ? 'bg-primary text-primary-foreground hover:bg-primary/90 shadow-neon'
-                  : isRefMode 
-                    ? 'bg-accent text-accent-foreground hover:bg-accent/90 shadow-neon-accent' 
-                    : 'bg-primary text-primary-foreground hover:bg-primary/90 shadow-neon'
-              }`}
+              className={startButtonClass}
             >
-              {isCtx7Mode ? <Zap size={22} /> : isRefMode ? <RefreshCw size={22} /> : <Play size={22} fill="currentColor" />}
-              {isCtx7Mode ? '开始 Context7 注册' : isRefMode ? '开始 Ref 注册' : '启动任务'}
+              {startButtonIcon}
+              {startButtonLabel}
             </motion.button>
           ) : (
             <motion.button
+              type="button"
               onClick={handleStop}
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
@@ -406,7 +649,7 @@ export default function RegisterPanel({
         </div>
       </motion.div>
 
-      <motion.div 
+      <motion.div
         className="lg:col-span-2 flex flex-col rounded-2xl border border-border/50 bg-card overflow-hidden h-full"
         initial={{ opacity: 0, x: 20 }}
         animate={{ opacity: 1, x: 0 }}
@@ -414,25 +657,45 @@ export default function RegisterPanel({
       >
         <div className="px-6 py-4 border-b border-border/50 bg-secondary/30 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <motion.div animate={isRegistering ? { rotate: 360 } : {}} transition={{ duration: 2, repeat: Infinity, ease: 'linear' }}>
-              <Activity className={isRegistering ? 'text-accent' : 'text-muted-foreground'} size={20} />
+            <motion.div
+              animate={isRegistering ? { rotate: 360 } : {}}
+              transition={{ duration: 2, repeat: Infinity, ease: 'linear' }}
+            >
+              <Activity
+                className={
+                  isRegistering ? 'text-accent' : 'text-muted-foreground'
+                }
+                size={20}
+              />
             </motion.div>
             <h3 className="font-semibold text-lg">运行日志</h3>
             {isRegistering && (
-              <motion.div className="flex items-center gap-2 px-3 py-1 rounded-full bg-accent/10 text-accent text-sm" initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }}>
-                <Zap size={14} />运行中
+              <motion.div
+                className="flex items-center gap-2 px-3 py-1 rounded-full bg-accent/10 text-accent text-sm"
+                initial={{ opacity: 0, scale: 0.8 }}
+                animate={{ opacity: 1, scale: 1 }}
+              >
+                <Zap size={14} />
+                运行中
               </motion.div>
             )}
           </div>
-          <button onClick={() => setLogs([])} className="text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer px-3 py-1 rounded-lg hover:bg-secondary">
+          <button
+            type="button"
+            onClick={() => setLogs([])}
+            className="text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer px-3 py-1 rounded-lg hover:bg-secondary"
+          >
             清空日志
           </button>
         </div>
-        
+
         <div className="flex-1 p-4 overflow-auto space-y-1 font-mono text-base">
           {logs.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-muted-foreground">
-              <motion.div animate={{ rotate: 360 }} transition={{ duration: 8, repeat: Infinity, ease: 'linear' }}>
+              <motion.div
+                animate={{ rotate: 360 }}
+                transition={{ duration: 8, repeat: Infinity, ease: 'linear' }}
+              >
                 <Zap className="mb-4 opacity-20" size={52} />
               </motion.div>
               <p className="text-lg">等待任务启动...</p>
@@ -440,14 +703,16 @@ export default function RegisterPanel({
           ) : (
             <>
               {logs.map((log, index) => (
-                <motion.div 
+                <motion.div
                   key={log.id}
                   initial={{ opacity: 0, x: -10 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: index * 0.02 }}
                   className={`flex items-start gap-3 p-3 rounded-lg transition-colors ${LOG_STYLES[log.type]}`}
                 >
-                  <span className="text-sm opacity-60 mt-0.5">{log.timestamp}</span>
+                  <span className="text-sm opacity-60 mt-0.5">
+                    {log.timestamp}
+                  </span>
                   <span className="flex-1 break-all">{log.message}</span>
                 </motion.div>
               ))}

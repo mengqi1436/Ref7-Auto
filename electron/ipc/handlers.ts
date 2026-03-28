@@ -11,19 +11,28 @@ import {
   stopRegistration,
   isRegistrationRunning
 } from '../services/browser'
+import { isRefRegistrationRunning } from '../services/ref-browser'
 import {
-  initRefBrowser,
-  registerRefAccount,
-  sendRefVerificationEmail,
-  clickRefVerificationLink,
-  getRefApiKey,
-  closeRefBrowser,
-  isRefRegistrationRunning
-} from '../services/ref-browser'
-import { fetchRefAccountCredits, fetchAllRefCreditsSequential } from '../services/ref-credits'
+  fetchRefAccountCredits,
+  fetchAllRefCredits,
+  resolveFirebaseWebApiKey,
+  firebaseSignInWithPassword
+} from '../services/ref-credits'
+import {
+  refApiRegisterFull,
+  refApiCompleteVerification,
+  extractOobCodeFromLink,
+  createRefApiKey,
+  firebaseLookup,
+  isInvalidOobCodeError
+} from '../services/ref-api'
 import {
   fetchContext7AccountRequests,
-  fetchAllContext7RequestsSequential
+  fetchAllContext7Requests,
+  registerContext7ClerkSendEmailCode,
+  registerContext7ClerkVerifyAndSession,
+  createContext7DashboardApiKey,
+  establishCtx7DashboardCookie
 } from '../services/context7-requests'
 import { TempMailPlusService } from '../services/email/tempmailplus'
 import { ImapMailService } from '../services/email/imap'
@@ -60,12 +69,17 @@ interface Context7RegistrationResult {
   apiKey?: string
   apiKeyName?: string
   requestsLimit?: number
+  ctx7RequestsUsed?: number
+  ctx7RequestsLimit?: number
+  ctx7RequestsUpdatedAt?: string
   error?: string
 }
 
 interface RefRegistrationResult {
   success: boolean
   refApiKey?: string
+  refCredits?: number
+  refCreditsUpdatedAt?: string
   error?: string
 }
 
@@ -190,6 +204,39 @@ async function getRefVerificationLink(
   return null
 }
 
+async function persistRefCreditsAfterBind(
+  accountId: number,
+  email: string,
+  password: string
+): Promise<{ refCredits: number; refCreditsUpdatedAt: string } | undefined> {
+  const r = await fetchRefAccountCredits({ email, password })
+  if (r.credits !== null) {
+    database.updateAccountRefCredits(accountId, r.credits)
+    const row = database.getAllAccounts().find(a => a.id === accountId)
+    if (row?.refCredits != null && row.refCreditsUpdatedAt) {
+      return { refCredits: row.refCredits, refCreditsUpdatedAt: row.refCreditsUpdatedAt }
+    }
+    return { refCredits: r.credits, refCreditsUpdatedAt: new Date().toISOString() }
+  }
+  if (r.error) sendLog('warning', `Ref 额度获取失败: ${r.error}`)
+  return undefined
+}
+
+async function persistContext7RequestsAfterBind(
+  accountId: number,
+  email: string,
+  password: string
+): Promise<{ used: number; limit: number; updatedAt: string } | undefined> {
+  const r = await fetchContext7AccountRequests({ email, password })
+  if (r.used != null && r.limit != null) {
+    database.updateAccountContext7Requests(accountId, r.used, r.limit)
+    sendLog('success', `Context7 用量已保存: ${r.used} / ${r.limit}`)
+    return { used: r.used, limit: r.limit, updatedAt: new Date().toISOString() }
+  }
+  if (r.error) sendLog('warning', `Context7 用量获取失败: ${r.error}`)
+  return undefined
+}
+
 async function handleRegistration(config: RegistrationConfig): Promise<void> {
   const settings = database.getSettings()
   const browserOptions = { headless: !config.showBrowser, onLog: sendLog }
@@ -207,53 +254,128 @@ async function handleRegistration(config: RegistrationConfig): Promise<void> {
 
       const { email, emailService } = createEmailService(config, settings)
       const password = generatePassword(config.passwordLength)
+      let usedBrowser = false
 
       try {
-        await initBrowser(browserOptions)
-        const success = await registerAccount({ email, password }, browserOptions)
+        let sessionForKey: { cookieHeader: string; authorization?: string } | null = null
+        let apiKey: string | undefined
+        let apiKeyName: string | undefined
 
-        if (!success) {
-          sendLog('error', `账户 ${email} 注册失败`)
-          continue
+        const apiPrep = await registerContext7ClerkSendEmailCode(email, password)
+        let verificationCode: string | null = null
+
+        if (apiPrep.ok && apiPrep.skipVerification && apiPrep.session) {
+          sessionForKey = apiPrep.session
+          sendLog('success', 'Clerk 注册已完成')
+        } else if (apiPrep.ok) {
+          sendLog('info', '等待验证码邮件...')
+          verificationCode = await getVerificationCode(emailService, email, config)
+          if (!verificationCode) {
+            sendLog('error', '获取验证码超时')
+            continue
+          }
+          sendLog('success', `验证码: ${verificationCode}`)
+          const ver = await registerContext7ClerkVerifyAndSession(
+            apiPrep.jar,
+            apiPrep.signUpId,
+            verificationCode,
+            email
+          )
+          if ('error' in ver) {
+            sendLog('warning', `API 验证失败: ${ver.error}，改用浏览器`)
+            verificationCode = null
+          } else {
+            sessionForKey = ver
+          }
         }
 
-        sendLog('info', '等待验证码邮件...')
-        const verificationCode = await getVerificationCode(emailService, email, config)
-
-        if (!verificationCode) {
-          sendLog('error', '获取验证码超时')
-          continue
+        if (!sessionForKey) {
+          if (apiPrep.ok === false) {
+            sendLog(
+              'info',
+              apiPrep.needsBrowserFallback
+                ? '使用浏览器注册（人机验证）'
+                : `Clerk API: ${apiPrep.error}`
+            )
+          }
+          await initBrowser(browserOptions)
+          usedBrowser = true
+          const success = await registerAccount({ email, password }, browserOptions)
+          if (!success) {
+            sendLog('error', `账户 ${email} 注册失败`)
+            continue
+          }
+          if (verificationCode === null) {
+            sendLog('info', '等待验证码邮件...')
+            verificationCode = await getVerificationCode(emailService, email, config)
+          }
+          if (!verificationCode) {
+            sendLog('error', '获取验证码超时')
+            continue
+          }
+          sendLog('success', `验证码: ${verificationCode}`)
+          const verified = await inputVerificationCode(verificationCode, browserOptions)
+          if (!verified) {
+            sendLog('error', `账户 ${email} 验证失败`)
+            continue
+          }
+          const est = await establishCtx7DashboardCookie(email, password)
+          if (!('error' in est)) {
+            sessionForKey = { cookieHeader: est.cookieHeader, authorization: est.authorization }
+          }
         }
 
-        sendLog('success', `验证码: ${verificationCode}`)
-        const verified = await inputVerificationCode(verificationCode, browserOptions)
-
-        if (!verified) {
-          sendLog('error', `账户 ${email} 验证失败`)
-          continue
+        if (sessionForKey) {
+          const kr = await createContext7DashboardApiKey(sessionForKey)
+          if (kr.success === false) {
+            sendLog('warning', kr.error)
+          } else {
+            apiKey = kr.apiKey
+            apiKeyName = kr.keyName
+            sendLog('success', `API Key 创建成功: ${apiKey.slice(0, 12)}****`)
+          }
         }
 
-        sendLog('info', '开始获取 Context7 API Key...')
-        const apiKeyResult = await createContext7ApiKey(browserOptions)
-
-        const { apiKey, keyName: apiKeyName, requestsLimit } = apiKeyResult
-        if (apiKeyResult.success) {
-          sendLog(apiKey ? 'success' : 'warning', 
-            apiKey ? `API Key 创建成功: ${apiKey.slice(0, 12)}****` : 'API Key 已创建但未能获取完整值')
-        } else {
-          sendLog('warning', '获取 API Key 失败，账户仍然注册成功')
+        if (!apiKey && usedBrowser) {
+          sendLog('info', '使用浏览器创建 API Key...')
+          const apiKeyResult = await createContext7ApiKey(browserOptions)
+          apiKey = apiKeyResult.apiKey
+          apiKeyName = apiKeyResult.keyName
+          if (apiKeyResult.success) {
+            sendLog(
+              apiKey ? 'success' : 'warning',
+              apiKey ? `API Key 创建成功: ${apiKey.slice(0, 12)}****` : 'API Key 已创建但未能获取完整值'
+            )
+          } else {
+            sendLog('warning', '获取 API Key 失败，账户仍然注册成功')
+          }
+        } else if (!apiKey && !usedBrowser) {
+          sendLog('warning', '未能通过接口创建 API Key，可稍后在 Dashboard 补绑')
         }
 
         const account = database.addAccount({
-          email, password, emailType: config.emailType,
-          status: 'active', apiKey, apiKeyName, requestsLimit
+          email,
+          password,
+          emailType: config.emailType,
+          status: 'active',
+          apiKey,
+          apiKeyName
         })
 
-        mainWindow?.webContents.send('register:complete', { ...account, apiKey, apiKeyName, requestsLimit })
+        await persistContext7RequestsAfterBind(account.id, email, password)
+        const synced = database.getAllAccounts().find(a => a.id === account.id) ?? account
+
+        mainWindow?.webContents.send('register:complete', {
+          ...synced,
+          apiKey,
+          apiKeyName
+        })
         sendLog('success', `账户 ${email} 注册成功！`)
       } finally {
-        sendLog('info', '正在关闭浏览器...')
-        await closeBrowser()
+        if (usedBrowser) {
+          sendLog('info', '正在关闭浏览器...')
+          await closeBrowser()
+        }
       }
 
       if (i < config.count - 1 && isRegistrationRunning()) {
@@ -274,42 +396,143 @@ async function handleRegistration(config: RegistrationConfig): Promise<void> {
 
 async function handleRefRegistration(config: RefRegistrationConfig): Promise<RefRegistrationResult> {
   const settings = database.getSettings()
-  const opts = { headless: !config.showBrowser, onLog: sendLog }
+
+  let email = config.email
+  let password = config.password
+  const accountId = config.accountId
+
+  if (!email && settings.imapMail.domain) {
+    email = generateRandomEmail(settings.imapMail.domain)
+    password = generatePassword(settings.registration.passwordLength)
+    sendLog('info', `生成随机邮箱: ${email}`)
+  }
+
+  if (!email || !password) {
+    return { success: false, error: '缺少邮箱或密码' }
+  }
 
   try {
-    sendLog('info', `开始为 ${config.email} 注册 Ref API...`)
-    await initRefBrowser(opts)
+    sendLog('info', `开始为 ${email} 通过 API 注册 Ref...`)
 
-    if (!await registerRefAccount({ email: config.email, password: config.password }, opts)) {
-      await closeRefBrowser()
-      return { success: false, error: 'Ref 注册失败' }
+    const regResult = await refApiRegisterFull(email, password, sendLog)
+    if (!regResult.success || !regResult.idToken) {
+      return { success: false, error: regResult.error || 'Ref API 注册失败' }
     }
 
-    if (!await sendRefVerificationEmail(opts)) {
-      await closeRefBrowser()
-      return { success: false, error: '发送验证邮件失败' }
+    if (regResult.skipVerificationFlow) {
+      const keyResult = await createRefApiKey(regResult.idToken)
+      if ('error' in keyResult) {
+        return { success: false, error: keyResult.error }
+      }
+      sendLog('success', `Ref API Key: ${keyResult.apiKey.slice(0, 15)}****`)
+      database.updateAccountRefApiKey(accountId, keyResult.apiKey)
+      const refSnap = await persistRefCreditsAfterBind(accountId, email, password)
+      return {
+        success: true,
+        refApiKey: keyResult.apiKey,
+        ...refSnap
+      }
     }
+
+    sendLog('success', 'Ref 账户注册成功，等待验证邮件...')
     await delay(5000)
 
-    const verificationLink = await getRefVerificationLink(settings, config.email)
+    const verificationLink = await getRefVerificationLink(settings, email)
     if (!verificationLink) {
-      await closeRefBrowser()
       return { success: false, error: '获取验证链接超时' }
     }
+    sendLog('success', '获取到验证链接')
 
-    await clickRefVerificationLink(verificationLink, opts)
-    const result = await getRefApiKey(opts)
-    await closeRefBrowser()
-
-    if (result.success && result.apiKey) {
-      sendLog('success', `Ref API Key: ${result.apiKey.slice(0, 15)}****`)
-      database.updateAccountRefApiKey(config.accountId, result.apiKey)
-      return { success: true, refApiKey: result.apiKey }
+    const oobCode = extractOobCodeFromLink(verificationLink)
+    if (!oobCode) {
+      sendLog('warning', '无法从链接提取 oobCode，尝试直接访问验证链接...')
+      try {
+        const linkUrl = new URL(verificationLink)
+        if (linkUrl.protocol !== 'https:') {
+          return { success: false, error: '验证链接协议不安全' }
+        }
+        await fetch(verificationLink, { redirect: 'follow' })
+        sendLog('info', '已访问验证链接')
+      } catch {
+        return { success: false, error: '验证链接访问失败' }
+      }
     }
 
-    return { success: false, error: result.error || '获取 API Key 失败' }
+    const webApiKey = await resolveFirebaseWebApiKey()
+
+    if (oobCode) {
+      const completion = await refApiCompleteVerification(webApiKey, oobCode, regResult.idToken)
+      if (!completion.success || !completion.apiKey) {
+        const errMsg = completion.error || '验证完成但获取 API Key 失败'
+        if (isInvalidOobCodeError(errMsg)) {
+          sendLog(
+            'warning',
+            '验证链接可能无效或已过期，尝试通过密码登录检查邮箱验证状态...'
+          )
+          const signIn = await firebaseSignInWithPassword(webApiKey, email, password)
+          if ('error' in signIn) {
+            return {
+              success: false,
+              error: `${errMsg}；密码登录失败: ${signIn.error}`
+            }
+          }
+          const lookup = await firebaseLookup(webApiKey, signIn.idToken)
+          if ('error' in lookup) {
+            return {
+              success: false,
+              error: `${errMsg}；账户查询失败: ${lookup.error}`
+            }
+          }
+          if (!lookup.emailVerified) {
+            return {
+              success: false,
+              error: '验证链接无效或已过期，且邮箱仍未完成验证'
+            }
+          }
+          const keyResult = await createRefApiKey(signIn.idToken)
+          if ('error' in keyResult) {
+            return { success: false, error: keyResult.error }
+          }
+          sendLog('success', `Ref API Key: ${keyResult.apiKey.slice(0, 15)}****`)
+          database.updateAccountRefApiKey(accountId, keyResult.apiKey)
+          const refSnap = await persistRefCreditsAfterBind(accountId, email, password)
+          return {
+            success: true,
+            refApiKey: keyResult.apiKey,
+            ...refSnap
+          }
+        }
+        return { success: false, error: errMsg }
+      }
+      sendLog('success', `Ref API Key: ${completion.apiKey.slice(0, 15)}****`)
+      database.updateAccountRefApiKey(accountId, completion.apiKey)
+      const refSnap = await persistRefCreditsAfterBind(accountId, email, password)
+      return {
+        success: true,
+        refApiKey: completion.apiKey,
+        ...refSnap
+      }
+    }
+
+    sendLog('info', '等待验证生效后获取 API Key...')
+    await delay(3000)
+    const signIn = await firebaseSignInWithPassword(webApiKey, email, password)
+    if ('error' in signIn) {
+      return { success: false, error: `重新登录失败: ${signIn.error}` }
+    }
+    const keyResult = await createRefApiKey(signIn.idToken)
+    if ('error' in keyResult) {
+      return { success: false, error: keyResult.error }
+    }
+    sendLog('success', `Ref API Key: ${keyResult.apiKey.slice(0, 15)}****`)
+    database.updateAccountRefApiKey(accountId, keyResult.apiKey)
+    const refSnap = await persistRefCreditsAfterBind(accountId, email, password)
+    return {
+      success: true,
+      refApiKey: keyResult.apiKey,
+      ...refSnap
+    }
   } catch (error: unknown) {
-    await closeRefBrowser()
     const message = getErrorMessage(error)
     sendLog('error', `Ref 注册出错: ${message}`)
     return { success: false, error: message }
@@ -319,54 +542,131 @@ async function handleRefRegistration(config: RefRegistrationConfig): Promise<Ref
 async function handleContext7Registration(config: Context7RegistrationConfig): Promise<Context7RegistrationResult> {
   const settings = database.getSettings()
   const browserOptions = { headless: !config.showBrowser, onLog: sendLog }
+  let usedBrowser = false
+  const email = config.email
+  const password = config.password
 
   try {
-    sendLog('info', `开始为 ${config.email} 注册 Context7...`)
-    await initBrowser(browserOptions)
+    sendLog('info', `开始为 ${email} 注册 Context7...`)
+    let sessionForKey: { cookieHeader: string; authorization?: string } | null = null
+    let apiKey: string | undefined
+    let apiKeyName: string | undefined
 
-    const success = await registerAccount({ email: config.email, password: config.password }, browserOptions)
-    if (!success) {
-      await closeBrowser()
-      return { success: false, error: 'Context7 注册失败' }
+    const apiPrep = await registerContext7ClerkSendEmailCode(email, password)
+    let verificationCode: string | null = null
+
+    if (apiPrep.ok && apiPrep.skipVerification && apiPrep.session) {
+      sessionForKey = apiPrep.session
+      sendLog('success', 'Clerk 注册已完成')
+    } else if (apiPrep.ok) {
+      const emailService =
+        config.emailType === 'tempmail_plus'
+          ? new TempMailPlusService(settings.tempMailPlus)
+          : new ImapMailService(settings.imapMail)
+      sendLog('info', '等待验证码邮件...')
+      verificationCode = await getVerificationCode(emailService, email, {
+        emailType: config.emailType
+      } as RegistrationConfig)
+      if (!verificationCode) {
+        return { success: false, error: '获取验证码超时' }
+      }
+      sendLog('success', `验证码: ${verificationCode}`)
+      const ver = await registerContext7ClerkVerifyAndSession(apiPrep.jar, apiPrep.signUpId, verificationCode, email)
+      if ('error' in ver) {
+        sendLog('warning', `API 验证失败: ${ver.error}，改用浏览器`)
+        verificationCode = null
+      } else {
+        sessionForKey = ver
+      }
     }
 
-    const emailService = config.emailType === 'tempmail_plus'
-      ? new TempMailPlusService(settings.tempMailPlus)
-      : new ImapMailService(settings.imapMail)
-
-    sendLog('info', '等待验证码邮件...')
-    const verificationCode = await getVerificationCode(
-      emailService,
-      config.email,
-      { emailType: config.emailType } as RegistrationConfig
-    )
-
-    if (!verificationCode) {
-      await closeBrowser()
-      return { success: false, error: '获取验证码超时' }
+    if (!sessionForKey) {
+      if (apiPrep.ok === false) {
+        sendLog(
+          'info',
+          apiPrep.needsBrowserFallback ? '使用浏览器注册（人机验证）' : `Clerk API: ${apiPrep.error}`
+        )
+      }
+      await initBrowser(browserOptions)
+      usedBrowser = true
+      const success = await registerAccount({ email, password }, browserOptions)
+      if (!success) {
+        await closeBrowser()
+        return { success: false, error: 'Context7 注册失败' }
+      }
+      const emailService =
+        config.emailType === 'tempmail_plus'
+          ? new TempMailPlusService(settings.tempMailPlus)
+          : new ImapMailService(settings.imapMail)
+      if (verificationCode === null) {
+        sendLog('info', '等待验证码邮件...')
+        verificationCode = await getVerificationCode(emailService, email, {
+          emailType: config.emailType
+        } as RegistrationConfig)
+      }
+      if (!verificationCode) {
+        await closeBrowser()
+        return { success: false, error: '获取验证码超时' }
+      }
+      sendLog('success', `验证码: ${verificationCode}`)
+      const verified = await inputVerificationCode(verificationCode, browserOptions)
+      if (!verified) {
+        await closeBrowser()
+        return { success: false, error: '验证失败' }
+      }
+      const est = await establishCtx7DashboardCookie(email, password)
+      if (!('error' in est)) {
+        sessionForKey = { cookieHeader: est.cookieHeader, authorization: est.authorization }
+      }
     }
 
-    sendLog('success', `验证码: ${verificationCode}`)
-    const verified = await inputVerificationCode(verificationCode, browserOptions)
-    if (!verified) {
-      await closeBrowser()
-      return { success: false, error: '验证失败' }
+    if (sessionForKey) {
+      const kr = await createContext7DashboardApiKey(sessionForKey)
+      if (kr.success === false) {
+        sendLog('warning', kr.error)
+      } else {
+        apiKey = kr.apiKey
+        apiKeyName = kr.keyName
+        sendLog('success', `API Key 创建成功: ${apiKey.slice(0, 12)}****`)
+      }
     }
 
-    sendLog('info', '开始获取 Context7 API Key...')
-    const apiKeyResult = await createContext7ApiKey(browserOptions)
-    await closeBrowser()
+    if (!apiKey && usedBrowser) {
+      sendLog('info', '使用浏览器创建 API Key...')
+      const apiKeyResult = await createContext7ApiKey(browserOptions)
+      apiKey = apiKeyResult.apiKey
+      apiKeyName = apiKeyResult.keyName
+    }
 
-    const { apiKey, keyName: apiKeyName, requestsLimit } = apiKeyResult
-    if (apiKeyResult.success && apiKey) {
-      sendLog('success', `API Key 创建成功: ${apiKey.slice(0, 12)}****`)
-      database.updateAccountApiKey(config.accountId, apiKey, apiKeyName, requestsLimit)
-      return { success: true, apiKey, apiKeyName, requestsLimit }
+    if (usedBrowser) {
+      await closeBrowser()
+    }
+
+    if (apiKey) {
+      database.updateAccountApiKey(config.accountId, apiKey, apiKeyName)
+      const usage = await persistContext7RequestsAfterBind(
+        config.accountId,
+        config.email,
+        config.password
+      )
+      return {
+        success: true,
+        apiKey,
+        apiKeyName,
+        ...(usage
+          ? {
+              requestsLimit: usage.limit,
+              ctx7RequestsUsed: usage.used,
+              ctx7RequestsLimit: usage.limit,
+              ctx7RequestsUpdatedAt: usage.updatedAt
+            }
+          : {})
+      }
     }
 
     return { success: false, error: '获取 API Key 失败' }
   } catch (error: unknown) {
-    await closeBrowser()
+    if (usedBrowser) await closeBrowser()
     const message = getErrorMessage(error)
     sendLog('error', `Context7 注册出错: ${message}`)
     return { success: false, error: message }
@@ -393,7 +693,9 @@ export async function registerIpcHandlers(window: BrowserWindow): Promise<void> 
     const acc = database.getAllAccounts().find(a => a.id === accountId)
     if (!acc) return { credits: null as number | null, error: '账户不存在' }
     if (!acc.refApiKey) return { credits: null as number | null, error: '未绑定 Ref API' }
-    return fetchRefAccountCredits({ email: acc.email, password: acc.password })
+    const r = await fetchRefAccountCredits({ email: acc.email, password: acc.password })
+    if (r.credits !== null) database.updateAccountRefCredits(accountId, r.credits)
+    return r
   })
 
   ipcMain.handle('accounts:fetchRefCreditsAll', async () => {
@@ -401,9 +703,12 @@ export async function registerIpcHandlers(window: BrowserWindow): Promise<void> 
       return { results: {}, error: 'Ref 注册进行中' }
     }
     const withRef = database.getAllAccounts().filter(a => a.refApiKey)
-    const results = await fetchAllRefCreditsSequential(
+    const results = await fetchAllRefCredits(
       withRef.map(a => ({ id: a.id, email: a.email, password: a.password }))
     )
+    for (const [idStr, r] of Object.entries(results)) {
+      if (r.credits !== null) database.updateAccountRefCredits(Number(idStr), r.credits)
+    }
     return { results }
   })
 
@@ -414,7 +719,9 @@ export async function registerIpcHandlers(window: BrowserWindow): Promise<void> 
     const acc = database.getAllAccounts().find(a => a.id === accountId)
     if (!acc) return { used: null as number | null, limit: null as number | null, error: '账户不存在' }
     if (!acc.apiKey) return { used: null as number | null, limit: null as number | null, error: '未绑定 context7 API' }
-    return fetchContext7AccountRequests({ email: acc.email, password: acc.password })
+    const r = await fetchContext7AccountRequests({ email: acc.email, password: acc.password })
+    if (r.used !== null && r.limit !== null) database.updateAccountContext7Requests(accountId, r.used, r.limit)
+    return r
   })
 
   ipcMain.handle('accounts:fetchContext7RequestsAll', async () => {
@@ -422,9 +729,14 @@ export async function registerIpcHandlers(window: BrowserWindow): Promise<void> 
       return { results: {}, error: 'Context7 注册进行中' }
     }
     const withCtx = database.getAllAccounts().filter(a => a.apiKey)
-    const results = await fetchAllContext7RequestsSequential(
+    const results = await fetchAllContext7Requests(
       withCtx.map(a => ({ id: a.id, email: a.email, password: a.password }))
     )
+    for (const [idStr, r] of Object.entries(results)) {
+      if (r.used !== null && r.limit !== null) {
+        database.updateAccountContext7Requests(Number(idStr), r.used, r.limit)
+      }
+    }
     return { results }
   })
 

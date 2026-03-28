@@ -1,5 +1,6 @@
 const CTX7_ORIGIN = 'https://context7.com'
 const CTX7_DASHBOARD = `${CTX7_ORIGIN}/dashboard`
+const CTX7_SIGN_UP_URL = `${CTX7_ORIGIN}/sign-up`
 const CTX7_ACCOUNTS_ORIGIN = 'https://accounts.context7.com'
 const CTX7_ACCOUNTS_SIGN_IN = `${CTX7_ACCOUNTS_ORIGIN}/sign-in`
 
@@ -87,6 +88,10 @@ interface ClerkSignInResponse {
   created_session_id?: string | null
 }
 
+interface ClerkSignUpResponse extends ClerkSignInResponse {
+  missing_fields?: string[]
+}
+
 interface ClerkWrapped {
   response?: ClerkSignInResponse
   errors?: ClerkErrorItem[]
@@ -133,6 +138,10 @@ function dashboardAuthHeaders(entry: Pick<Ctx7SessionEntry, 'cookieHeader' | 'au
   return h
 }
 
+function clerkRequestReferer(path: string): string {
+  return path.includes('/sign_ups') ? CTX7_SIGN_UP_URL : CTX7_ACCOUNTS_SIGN_IN
+}
+
 async function clerkFetch(
   path: string,
   jar: Map<string, string>,
@@ -144,6 +153,7 @@ async function clerkFetch(
     ...init,
     headers: {
       ...CLERK_FETCH_HEADERS,
+      Referer: clerkRequestReferer(path),
       ...(cookie ? { Cookie: cookie } : {}),
       ...init.headers
     }
@@ -237,7 +247,7 @@ async function clerkSignInWithPassword(
   return { ok: true, sessionJwt: jwt || undefined }
 }
 
-async function establishCtx7DashboardCookie(
+export async function establishCtx7DashboardCookie(
   email: string,
   password: string
 ): Promise<{ cookieHeader: string; authorization?: string } | { error: string }> {
@@ -395,7 +405,7 @@ export async function fetchContext7AccountRequests(data: Ctx7Credentials): Promi
   }
 }
 
-export async function fetchAllContext7RequestsSequential(
+export async function fetchAllContext7Requests(
   accounts: { id: number; email: string; password: string }[]
 ): Promise<Record<number, Context7RequestsResult>> {
   const entries = await Promise.all(
@@ -405,4 +415,199 @@ export async function fetchAllContext7RequestsSequential(
     })
   )
   return Object.fromEntries(entries)
+}
+
+export type RegisterContext7ClerkSendEmailResult =
+  | {
+      ok: true
+      jar: Map<string, string>
+      signUpId: string
+      skipVerification?: boolean
+      session?: { cookieHeader: string; authorization?: string }
+    }
+  | { ok: false; error: string; needsBrowserFallback?: boolean }
+
+function clerkErrorSuggestsBrowserFallback(code: string | undefined, message: string | null): boolean {
+  const t = `${code || ''} ${message || ''}`.toLowerCase()
+  return (
+    t.includes('captcha') ||
+    t.includes('turnstile') ||
+    (t.includes('verification') && t.includes('bot')) ||
+    t.includes('security')
+  )
+}
+
+function extractCtx7SecretFromJson(data: unknown): string | null {
+  if (typeof data === 'string') {
+    const m = data.match(/ctx7sk-[a-zA-Z0-9-]{20,}/)
+    return m ? m[0] : null
+  }
+  if (!data || typeof data !== 'object') return null
+  for (const v of Object.values(data)) {
+    const found = extractCtx7SecretFromJson(v)
+    if (found) return found
+  }
+  return null
+}
+
+function randomDashboardKeyLabel(): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+  return Array.from({ length: 5 }, () => chars.charAt(Math.floor(Math.random() * chars.length))).join('')
+}
+
+function cacheCtx7Session(email: string, cookieHeader: string, authorization?: string): void {
+  sessionByEmail.set(email.toLowerCase(), { cookieHeader, authorization })
+}
+
+export async function registerContext7ClerkSendEmailCode(
+  email: string,
+  password: string
+): Promise<RegisterContext7ClerkSendEmailResult> {
+  const jar = new Map<string, string>()
+  try {
+    await clerkBootstrap(jar)
+    let body = `email_address=${encodeURIComponent(email)}&password=${encodeURIComponent(password)}`
+    let r = await clerkFetch('/client/sign_ups', jar, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body
+    })
+    let w = (await r.json().catch(() => ({}))) as ClerkWrapped & { response?: ClerkSignUpResponse }
+    let err = firstClerkError(w)
+    if (err && /legal|terms|tos/i.test(err)) {
+      body = `email_address=${encodeURIComponent(email)}&password=${encodeURIComponent(password)}&legal_accepted=true`
+      r = await clerkFetch('/client/sign_ups', jar, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body
+      })
+      w = (await r.json().catch(() => ({}))) as ClerkWrapped & { response?: ClerkSignUpResponse }
+      err = firstClerkError(w)
+    }
+    if (err) {
+      const code = w.errors?.[0]?.code
+      return {
+        ok: false,
+        error: err,
+        needsBrowserFallback: clerkErrorSuggestsBrowserFallback(code, err)
+      }
+    }
+
+    const sig = w.response
+    if (!sig?.id) return { ok: false, error: 'Clerk 注册响应缺少 id' }
+    const signUpId = sig.id
+
+    if (sig.status === 'complete' && sig.created_session_id) {
+      const done = await clerkCompleteSession(jar, sig.created_session_id)
+      if ('error' in done) return { ok: false, error: done.error }
+      const jwt = done.sessionJwt
+      const authorization = jwt && jwt.length > 0 ? `Bearer ${jwt}` : undefined
+      const cookieHeader = jarToCookieHeader(jar)
+      cacheCtx7Session(email, cookieHeader, authorization)
+      return {
+        ok: true,
+        jar,
+        signUpId,
+        skipVerification: true,
+        session: { cookieHeader, authorization }
+      }
+    }
+
+    const prep = await clerkFetch(
+      `/client/sign_ups/${encodeURIComponent(signUpId)}/prepare_verification`,
+      jar,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'strategy=email_code'
+      }
+    )
+    const pw = (await prep.json().catch(() => ({}))) as ClerkWrapped
+    const perr = firstClerkError(pw)
+    if (perr || !prep.ok) {
+      const code = pw.errors?.[0]?.code
+      return {
+        ok: false,
+        error: perr || `prepare_verification HTTP ${prep.status}`,
+        needsBrowserFallback: clerkErrorSuggestsBrowserFallback(code, perr)
+      }
+    }
+    return { ok: true, jar, signUpId }
+  } catch (error: unknown) {
+    return { ok: false, error: getErrorMessage(error) }
+  }
+}
+
+export async function registerContext7ClerkVerifyAndSession(
+  jar: Map<string, string>,
+  signUpId: string,
+  code: string,
+  emailForCache: string
+): Promise<{ cookieHeader: string; authorization?: string } | { error: string }> {
+  try {
+    const r = await clerkFetch(
+      `/client/sign_ups/${encodeURIComponent(signUpId)}/attempt_verification`,
+      jar,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `code=${encodeURIComponent(code.trim())}&strategy=email_code`
+      }
+    )
+    const w = (await r.json().catch(() => ({}))) as ClerkWrapped & { response?: ClerkSignUpResponse }
+    const err = firstClerkError(w)
+    if (err) return { error: err }
+    const sig = w.response
+    if (!sig?.status) return { error: 'Clerk 验证响应异常' }
+    const sessionId = sig.created_session_id
+    if (sig.status !== 'complete' || !sessionId) {
+      return { error: `Clerk 状态: ${sig.status}` }
+    }
+    const done = await clerkCompleteSession(jar, sessionId)
+    if ('error' in done) return { error: done.error }
+    const jwt = done.sessionJwt
+    const authorization = jwt && jwt.length > 0 ? `Bearer ${jwt}` : undefined
+    const cookieHeader = jarToCookieHeader(jar)
+    cacheCtx7Session(emailForCache, cookieHeader, authorization)
+    return { cookieHeader, authorization }
+  } catch (error: unknown) {
+    return { error: getErrorMessage(error) }
+  }
+}
+
+export type Context7DashboardApiKeyResult =
+  | { success: true; apiKey: string; keyName: string }
+  | { success: false; error: string }
+
+export async function createContext7DashboardApiKey(
+  session: Pick<Ctx7SessionEntry, 'cookieHeader' | 'authorization'>,
+  keyName?: string
+): Promise<Context7DashboardApiKeyResult> {
+  const name = (keyName && keyName.trim().length > 0 ? keyName : randomDashboardKeyLabel()).trim()
+  await dashboardInit(session)
+  const teamspaceId = await fetchTeamspaceId(session)
+  const authHeaders = dashboardAuthHeaders(session)
+  const tryBodies: Record<string, string>[] = [
+    { name },
+    ...(teamspaceId ? [{ name, teamspaceId }] : [])
+  ]
+  const paths: string[] = [`${CTX7_ORIGIN}/api/dashboard/api-keys`]
+  if (teamspaceId) {
+    paths.push(`${CTX7_ORIGIN}/api/dashboard/teamspaces/${encodeURIComponent(teamspaceId)}/api-keys`)
+  }
+
+  for (const url of paths) {
+    for (const json of tryBodies) {
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify(json)
+      })
+      if (!r.ok) continue
+      const raw = await r.json().catch(() => null)
+      const secret = extractCtx7SecretFromJson(raw)
+      if (secret) return { success: true, apiKey: secret, keyName: name }
+    }
+  }
+  return { success: false, error: 'Dashboard 创建 API Key 失败（HTTP 路径或响应格式已变）' }
 }

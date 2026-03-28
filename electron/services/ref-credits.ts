@@ -1,10 +1,10 @@
-const REF_ORIGIN = 'https://ref.tools'
+export const REF_ORIGIN = 'https://ref.tools'
 const REF_LOGIN_URL = `${REF_ORIGIN}/login`
 const REF_ACCOUNT_URL = `${REF_ORIGIN}/account`
-const REF_API_SESSION = `${REF_ORIGIN}/api/auth/session`
-const REF_API_TOKEN = `${REF_ORIGIN}/api/auth/token`
+export const REF_API_SESSION = `${REF_ORIGIN}/api/auth/session`
+export const REF_API_TOKEN = `${REF_ORIGIN}/api/auth/token`
 
-const REF_FETCH_HEADERS = {
+export const REF_FETCH_HEADERS = {
   'User-Agent':
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
   Origin: REF_ORIGIN,
@@ -13,14 +13,14 @@ const REF_FETCH_HEADERS = {
 
 const FIREBASE_KEY_REGEX = /AIza[0-9A-Za-z_-]{35}/
 
-const REF_DEFAULT_FIREBASE_WEB_API_KEY = 'AIzaSyAk9Mg_VQkMzmA37LfZOgsolxcaNV_FpV4'
+export const REF_DEFAULT_FIREBASE_WEB_API_KEY = 'AIzaSyAk9Mg_VQkMzmA37LfZOgsolxcaNV_FpV4'
 
-const FIRESTORE_USER_DOC = (localId: string) =>
+export const FIRESTORE_USER_DOC = (localId: string) =>
   `https://firestore.googleapis.com/v1/projects/prod-ref/databases/(default)/documents/users/${encodeURIComponent(localId)}`
 
 let cachedFirebaseWebApiKey: string | null = null
 
-interface RefSessionEntry {
+export interface RefSessionEntry {
   cookie: string
   localId: string
   idToken: string
@@ -76,7 +76,7 @@ async function findFirebaseKeyInBundles(html: string): Promise<string | null> {
   return null
 }
 
-async function resolveFirebaseWebApiKey(): Promise<string> {
+export async function resolveFirebaseWebApiKey(): Promise<string> {
   if (cachedFirebaseWebApiKey) return cachedFirebaseWebApiKey
   const fromEnv = process.env.REF7_REF_FIREBASE_WEB_API_KEY?.trim()
   if (fromEnv) {
@@ -101,12 +101,12 @@ async function resolveFirebaseWebApiKey(): Promise<string> {
   return REF_DEFAULT_FIREBASE_WEB_API_KEY
 }
 
-async function firebaseSignInWithPassword(
+export async function firebaseSignInWithPassword(
   apiKey: string,
   email: string,
   password: string
 ): Promise<{ idToken: string; localId: string } | { error: string }> {
-  const url = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${apiKey}`
+  const url = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${encodeURIComponent(apiKey)}`
   const r = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -126,7 +126,7 @@ async function firebaseSignInWithPassword(
   return { error: msg }
 }
 
-async function refToolsCreateSession(idToken: string): Promise<{ cookie: string } | { error: string }> {
+export async function refToolsCreateSession(idToken: string): Promise<{ cookie: string } | { error: string }> {
   const r = await fetch(REF_API_SESSION, {
     method: 'POST',
     headers: {
@@ -225,14 +225,14 @@ async function establishSessionCookie(email: string, password: string): Promise<
 async function resolveCredits(
   entry: RefSessionEntry
 ): Promise<{ credits: number } | { error: string }> {
+  const fromFs = await fetchCreditsFromFirestore(entry.localId, entry.idToken)
+  if (fromFs !== null) return { credits: fromFs }
+
   const htmlGot = await fetchCreditsWithSessionCookie(entry.cookie)
   if ('credits' in htmlGot) return htmlGot
   if (htmlGot.error === '会话已失效') return htmlGot
 
-  const fromFs = await fetchCreditsFromFirestore(entry.localId, entry.idToken)
-  if (fromFs !== null) return { credits: fromFs }
-
-  return { error: htmlGot.error }
+  return { error: '未解析到 Available Credits' }
 }
 
 export async function fetchRefAccountCredits(data: RefRegistrationData): Promise<RefCreditsResult> {
@@ -264,7 +264,7 @@ export async function fetchRefAccountCredits(data: RefRegistrationData): Promise
   }
 }
 
-export async function fetchAllRefCreditsSequential(
+export async function fetchAllRefCredits(
   accounts: { id: number; email: string; password: string }[]
 ): Promise<Record<number, RefCreditsResult>> {
   const entries = await Promise.all(

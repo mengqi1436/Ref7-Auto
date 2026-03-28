@@ -359,8 +359,14 @@ export class ImapMailService {
                               subject.includes('email') ||
                               subject.includes('confirm')
 
-            if (isRefMail || true) { // 检查所有邮件，寻找验证链接
-              const content = this.extractContent(parsed)
+            const content = this.extractContent(parsed)
+            const shouldTryLink =
+              isRefMail ||
+              content.includes('oobCode=') ||
+              /ref\.tools/i.test(content) ||
+              /firebaseapp\.com\/__\/auth/i.test(content)
+
+            if (shouldTryLink) {
               const link = this.extractRefVerificationLink(content)
 
               if (link) {
@@ -387,8 +393,28 @@ export class ImapMailService {
     checkNext(0)
   }
 
+  private sanitizeHrefLink(raw: string): string {
+    let link = raw
+    if (link.startsWith('href="')) {
+      link = link.replace(/^href="/, '').replace(/"$/, '')
+    }
+    link = link.replace(/["'<>]+$/, '')
+    link = link.replace(/[),.;:]+$/g, '')
+    return link
+  }
+
   private extractRefVerificationLink(text: string): string | null {
-    // 查找 Ref 验证链接的模式
+    const oobRe = /https?:\/\/[^\s"'<>]+[?&]oobCode=[^"'<>\s&]+/gi
+    for (const m of text.matchAll(oobRe)) {
+      let link = this.sanitizeHrefLink(m[0])
+      try {
+        new URL(link)
+        return link
+      } catch {
+        continue
+      }
+    }
+
     const patterns = [
       /https?:\/\/[^\s"'<>]*ref\.tools[^\s"'<>]*verify[^\s"'<>]*/gi,
       /https?:\/\/[^\s"'<>]*ref\.tools[^\s"'<>]*confirm[^\s"'<>]*/gi,
@@ -396,23 +422,14 @@ export class ImapMailService {
       /href="(https?:\/\/[^"]*ref\.tools[^"]*verify[^"]*)"/gi,
       /href="(https?:\/\/[^"]*ref\.tools[^"]*confirm[^"]*)"/gi,
       /href="(https?:\/\/[^"]*ref\.tools[^"]*token[^"]*)"/gi,
-      // 通用验证链接模式
-      /https?:\/\/[^\s"'<>]*verify[^\s"'<>]*token[^\s"'<>]*/gi,
       /https?:\/\/[^\s"'<>]*confirm[^\s"'<>]*email[^\s"'<>]*/gi,
+      /https?:\/\/[^\s"'<>]*verify[^\s"'<>]*token[^\s"'<>]*/gi
     ]
 
     for (const pattern of patterns) {
       const matches = text.match(pattern)
       if (matches && matches.length > 0) {
-        // 清理链接
-        let link = matches[0]
-        // 如果是 href="..." 格式，提取链接
-        if (link.startsWith('href="')) {
-          link = link.replace(/^href="/, '').replace(/"$/, '')
-        }
-        // 移除结尾的引号或尖括号
-        link = link.replace(/["'<>]+$/, '')
-        return link
+        return this.sanitizeHrefLink(matches[0])
       }
     }
 

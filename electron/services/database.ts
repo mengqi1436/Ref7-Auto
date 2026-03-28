@@ -18,6 +18,11 @@ export interface Account {
   apiKeyName?: string
   requestsLimit?: number
   refApiKey?: string
+  refCredits?: number
+  refCreditsUpdatedAt?: string
+  ctx7RequestsUsed?: number
+  ctx7RequestsLimit?: number
+  ctx7RequestsUpdatedAt?: string
 }
 
 export interface TempMailPlusConfig {
@@ -176,7 +181,12 @@ export function addAccount(account: Omit<Account, 'id' | 'createdAt'>): Account 
     apiKey: account.apiKey,
     apiKeyName: account.apiKeyName,
     requestsLimit: account.requestsLimit,
-    refApiKey: account.refApiKey
+    refApiKey: account.refApiKey,
+    refCredits: account.refCredits,
+    refCreditsUpdatedAt: account.refCreditsUpdatedAt,
+    ctx7RequestsUsed: account.ctx7RequestsUsed,
+    ctx7RequestsLimit: account.ctx7RequestsLimit,
+    ctx7RequestsUpdatedAt: account.ctx7RequestsUpdatedAt
   }
   
   data.nextId++
@@ -228,6 +238,27 @@ export function updateAccountRefApiKey(id: number, refApiKey: string): void {
   }
 }
 
+export function updateAccountRefCredits(id: number, credits: number): void {
+  const data = readJsonFile<AccountsData>(ACCOUNTS_FILE, getDefaultAccountsData())
+  const account = data.accounts.find(a => a.id === id)
+  if (account) {
+    account.refCredits = credits
+    account.refCreditsUpdatedAt = new Date().toISOString()
+    writeJsonFile(ACCOUNTS_FILE, data)
+  }
+}
+
+export function updateAccountContext7Requests(id: number, used: number, limit: number): void {
+  const data = readJsonFile<AccountsData>(ACCOUNTS_FILE, getDefaultAccountsData())
+  const account = data.accounts.find(a => a.id === id)
+  if (account) {
+    account.ctx7RequestsUsed = used
+    account.ctx7RequestsLimit = limit
+    account.ctx7RequestsUpdatedAt = new Date().toISOString()
+    writeJsonFile(ACCOUNTS_FILE, data)
+  }
+}
+
 export function exportAccounts(): string {
   return JSON.stringify(getAllAccounts(), null, 2)
 }
@@ -265,7 +296,12 @@ export function importAccounts(accountsToImport: Partial<Account>[]): ImportResu
       apiKey: account.apiKey,
       apiKeyName: account.apiKeyName,
       requestsLimit: account.requestsLimit,
-      refApiKey: account.refApiKey
+      refApiKey: account.refApiKey,
+      refCredits: account.refCredits,
+      refCreditsUpdatedAt: account.refCreditsUpdatedAt,
+      ctx7RequestsUsed: account.ctx7RequestsUsed,
+      ctx7RequestsLimit: account.ctx7RequestsLimit,
+      ctx7RequestsUpdatedAt: account.ctx7RequestsUpdatedAt
     })
     existingEmails.add(account.email.toLowerCase())
     result.imported++
