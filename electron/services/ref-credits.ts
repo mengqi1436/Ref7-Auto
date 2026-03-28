@@ -21,6 +21,9 @@ export const FIRESTORE_USER_DOC = (localId: string) =>
   `https://firestore.googleapis.com/v1/projects/prod-ref/databases/(default)/documents/users/${encodeURIComponent(localId)}`
 
 let cachedFirebaseWebApiKey: string | null = null
+let firebaseKeyResolveInFlight: Promise<string> | null = null
+
+const FIREBASE_BUNDLE_BATCH = 5
 
 const IDENTITY_LOOKUP = 'https://identitytoolkit.googleapis.com/v1/accounts:lookup'
 const IDENTITY_SEND_OOB = 'https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode'
@@ -114,13 +117,24 @@ function collectAssetJsUrls(html: string): string[] {
 }
 
 async function findFirebaseKeyInBundles(html: string): Promise<string | null> {
-  for (const url of collectAssetJsUrls(html).slice(0, 24)) {
-    try {
-      const r = await fetch(url, { headers: { ...REF_FETCH_HEADERS } })
-      const t = await r.text()
-      const m = t.match(FIREBASE_KEY_REGEX)
-      if (m) return m[0]
-    } catch {}
+  const urls = collectAssetJsUrls(html).slice(0, 24)
+  for (let i = 0; i < urls.length; i += FIREBASE_BUNDLE_BATCH) {
+    const chunk = urls.slice(i, i + FIREBASE_BUNDLE_BATCH)
+    const hits = await Promise.all(
+      chunk.map(async url => {
+        try {
+          const r = await fetch(url, { headers: { ...REF_FETCH_HEADERS } })
+          const t = await r.text()
+          const m = t.match(FIREBASE_KEY_REGEX)
+          return m ? m[0] : null
+        } catch {
+          return null
+        }
+      })
+    )
+    for (const key of hits) {
+      if (key) return key
+    }
   }
   return null
 }
@@ -132,22 +146,31 @@ export async function resolveFirebaseWebApiKey(): Promise<string> {
     cachedFirebaseWebApiKey = fromEnv
     return fromEnv
   }
+  if (!firebaseKeyResolveInFlight) {
+    firebaseKeyResolveInFlight = (async (): Promise<string> => {
+      try {
+        const r = await fetch(REF_LOGIN_URL, { headers: { ...REF_FETCH_HEADERS } })
+        const html = await r.text()
+        const inline = html.match(FIREBASE_KEY_REGEX)
+        if (inline) {
+          cachedFirebaseWebApiKey = inline[0]
+          return inline[0]
+        }
+        const fromBundle = await findFirebaseKeyInBundles(html)
+        if (fromBundle) {
+          cachedFirebaseWebApiKey = fromBundle
+          return fromBundle
+        }
+      } catch {}
+      cachedFirebaseWebApiKey = REF_DEFAULT_FIREBASE_WEB_API_KEY
+      return REF_DEFAULT_FIREBASE_WEB_API_KEY
+    })()
+  }
   try {
-    const r = await fetch(REF_LOGIN_URL, { headers: { ...REF_FETCH_HEADERS } })
-    const html = await r.text()
-    const inline = html.match(FIREBASE_KEY_REGEX)
-    if (inline) {
-      cachedFirebaseWebApiKey = inline[0]
-      return inline[0]
-    }
-    const fromBundle = await findFirebaseKeyInBundles(html)
-    if (fromBundle) {
-      cachedFirebaseWebApiKey = fromBundle
-      return fromBundle
-    }
-  } catch {}
-  cachedFirebaseWebApiKey = REF_DEFAULT_FIREBASE_WEB_API_KEY
-  return REF_DEFAULT_FIREBASE_WEB_API_KEY
+    return await firebaseKeyResolveInFlight
+  } finally {
+    firebaseKeyResolveInFlight = null
+  }
 }
 
 export async function firebaseSignInWithPassword(
@@ -348,12 +371,27 @@ export async function fetchRefAccountCredits(data: RefRegistrationData): Promise
   }
 }
 
+export interface RefBatchProgress {
+  done: number
+  total: number
+  email: string
+  ok: boolean
+  error?: string
+}
+
 export async function fetchAllRefCredits(
-  accounts: { id: number; email: string; password: string }[]
+  accounts: { id: number; email: string; password: string }[],
+  onProgress?: (p: RefBatchProgress) => void
 ): Promise<Record<number, RefCreditsResult>> {
+  await resolveFirebaseWebApiKey()
+  const total = accounts.length
+  let done = 0
   const entries = await Promise.all(
     accounts.map(async a => {
       const result = await fetchRefAccountCredits({ email: a.email, password: a.password })
+      done++
+      const ok = result.credits !== null
+      onProgress?.({ done, total, email: a.email, ok, error: result.error })
       return [a.id, result] as const
     })
   )

@@ -331,11 +331,15 @@ async function fetchTeamspaceId(
     `${CTX7_ORIGIN}/api/dashboard/teamspaces`,
     `${CTX7_ORIGIN}/api/dashboard/me/teamspace-memberships`
   ]
-  for (const url of urls) {
-    const r = await fetch(url, { headers: dashboardAuthHeaders(session) })
-    if (!r.ok) continue
-    const j = await r.json().catch(() => null)
-    const id = extractTeamspaceId(j)
+  const parsed = await Promise.all(
+    urls.map(async url => {
+      const r = await fetch(url, { headers: dashboardAuthHeaders(session) })
+      if (!r.ok) return null
+      const j = await r.json().catch(() => null)
+      return extractTeamspaceId(j)
+    })
+  )
+  for (const id of parsed) {
     if (id) return id
   }
   return null
@@ -357,9 +361,12 @@ async function fetchStats(
 }
 
 async function resolveRequestsWithSession(
-  session: Pick<Ctx7SessionEntry, 'cookieHeader' | 'authorization'>
+  session: Pick<Ctx7SessionEntry, 'cookieHeader' | 'authorization'>,
+  options?: { skipDashboardInit?: boolean }
 ): Promise<{ used: number; limit: number } | { error: string }> {
-  await dashboardInit(session)
+  if (!options?.skipDashboardInit) {
+    await dashboardInit(session)
+  }
   const teamspaceId = await fetchTeamspaceId(session)
   if (!teamspaceId) return { error: '未找到 teamspace' }
   return fetchStats(teamspaceId, session)
@@ -380,7 +387,7 @@ export async function fetchContext7AccountRequests(data: Ctx7Credentials): Promi
     let entry = sessionByEmail.get(key)
 
     if (entry && (await sessionLooksValid(entry))) {
-      const got = await resolveRequestsWithSession(entry)
+      const got = await resolveRequestsWithSession(entry, { skipDashboardInit: true })
       if ('used' in got) return { used: got.used, limit: got.limit }
       sessionByEmail.delete(key)
     } else if (entry) {
@@ -405,12 +412,26 @@ export async function fetchContext7AccountRequests(data: Ctx7Credentials): Promi
   }
 }
 
+export interface Context7BatchProgress {
+  done: number
+  total: number
+  email: string
+  ok: boolean
+  error?: string
+}
+
 export async function fetchAllContext7Requests(
-  accounts: { id: number; email: string; password: string }[]
+  accounts: { id: number; email: string; password: string }[],
+  onProgress?: (p: Context7BatchProgress) => void
 ): Promise<Record<number, Context7RequestsResult>> {
+  const total = accounts.length
+  let done = 0
   const entries = await Promise.all(
     accounts.map(async a => {
       const result = await fetchContext7AccountRequests({ email: a.email, password: a.password })
+      done++
+      const ok = result.used !== null && result.limit !== null
+      onProgress?.({ done, total, email: a.email, ok, error: result.error })
       return [a.id, result] as const
     })
   )

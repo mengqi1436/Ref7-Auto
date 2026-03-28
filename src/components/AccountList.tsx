@@ -148,7 +148,7 @@ export default function AccountList({
   const [ctx7RequestsByAccount, setCtx7RequestsByAccount] = useState<
     Record<number, { used: number | null; limit: number | null; error?: string }>
   >({})
-  const [usageRefreshLoading, setUsageRefreshLoading] = useState(false)
+  const [toolbarCreditsUpdateLoading, setToolbarCreditsUpdateLoading] = useState(false)
   const [singleRefreshLoading, setSingleRefreshLoading] = useState<Set<number>>(new Set())
   const [inlineRegisterLoading, setInlineRegisterLoading] = useState<Set<number>>(new Set())
 
@@ -172,13 +172,13 @@ export default function AccountList({
     }
   }, [currentPage, totalPages])
 
-  const handleUsageRefreshAll = useCallback(async () => {
+  const handleToolbarUpdateCredits = useCallback(async () => {
     const api = window.electronAPI
-    if (!api || usageRefreshLoading) return
+    if (!api || toolbarCreditsUpdateLoading) return
     const needRef = accounts.some(a => a.refApiKey)
     const needCtx7 = accounts.some(a => a.apiKey)
     if (!needRef && !needCtx7) return
-    setUsageRefreshLoading(true)
+    setToolbarCreditsUpdateLoading(true)
     try {
       const refP =
         needRef && api.fetchRefCreditsAll ? api.fetchRefCreditsAll() : Promise.resolve(null)
@@ -188,72 +188,60 @@ export default function AccountList({
           : Promise.resolve(null)
       const [refRes, ctxRes] = await Promise.all([refP, ctxP])
 
-      if (refRes) {
+      setRefCreditsByAccount(prev => {
+        if (!refRes) return prev
+        const next = { ...prev }
         if (refRes.error) {
-          setRefCreditsByAccount(prev => {
-            const next = { ...prev }
-            for (const a of accounts) {
-              if (a.refApiKey) next[a.id] = { credits: null, error: refRes.error }
-            }
-            return next
-          })
+          for (const a of accounts) {
+            if (a.refApiKey) next[a.id] = { credits: null, error: refRes.error }
+          }
         } else {
-          setRefCreditsByAccount(prev => {
-            const next = { ...prev }
-            for (const [idStr, r] of Object.entries(refRes.results)) {
-              next[Number(idStr)] = {
-                credits: r.credits,
-                error: r.error,
-                emailVerified: r.emailVerified
-              }
+          for (const [idStr, r] of Object.entries(refRes.results)) {
+            next[Number(idStr)] = {
+              credits: r.credits,
+              error: r.error,
+              emailVerified: r.emailVerified
             }
-            return next
-          })
+          }
         }
-      }
-      if (ctxRes) {
+        return next
+      })
+      setCtx7RequestsByAccount(prev => {
+        if (!ctxRes) return prev
+        const next = { ...prev }
         if (ctxRes.error) {
-          setCtx7RequestsByAccount(prev => {
-            const next = { ...prev }
-            for (const a of accounts) {
-              if (a.apiKey) next[a.id] = { used: null, limit: null, error: ctxRes.error }
-            }
-            return next
-          })
+          for (const a of accounts) {
+            if (a.apiKey) next[a.id] = { used: null, limit: null, error: ctxRes.error }
+          }
         } else {
-          setCtx7RequestsByAccount(prev => {
-            const next = { ...prev }
-            for (const [idStr, r] of Object.entries(ctxRes.results)) {
-              next[Number(idStr)] = { used: r.used, limit: r.limit, error: r.error }
-            }
-            return next
-          })
+          for (const [idStr, r] of Object.entries(ctxRes.results)) {
+            next[Number(idStr)] = { used: r.used, limit: r.limit, error: r.error }
+          }
         }
-      }
+        return next
+      })
 
       await onReloadAccounts?.()
-      if (refRes && !refRes.error) {
-        setRefCreditsByAccount(prev => {
-          const next = { ...prev }
-          for (const [idStr, r] of Object.entries(refRes.results)) {
-            if (r.credits !== null) delete next[Number(idStr)]
-          }
-          return next
-        })
-      }
-      if (ctxRes && !ctxRes.error) {
-        setCtx7RequestsByAccount(prev => {
-          const next = { ...prev }
-          for (const [idStr, r] of Object.entries(ctxRes.results)) {
-            if (r.used !== null && r.limit !== null) delete next[Number(idStr)]
-          }
-          return next
-        })
-      }
+      setRefCreditsByAccount(prev => {
+        if (!refRes || refRes.error) return prev
+        const next = { ...prev }
+        for (const [idStr, r] of Object.entries(refRes.results)) {
+          if (r.credits !== null) delete next[Number(idStr)]
+        }
+        return next
+      })
+      setCtx7RequestsByAccount(prev => {
+        if (!ctxRes || ctxRes.error) return prev
+        const next = { ...prev }
+        for (const [idStr, r] of Object.entries(ctxRes.results)) {
+          if (r.used !== null && r.limit !== null) delete next[Number(idStr)]
+        }
+        return next
+      })
     } finally {
-      setUsageRefreshLoading(false)
+      setToolbarCreditsUpdateLoading(false)
     }
-  }, [accounts, usageRefreshLoading, onReloadAccounts])
+  }, [accounts, toolbarCreditsUpdateLoading, onReloadAccounts])
 
   const refreshRefVerificationFlow = useCallback(
     async (account: Account) => {
@@ -517,17 +505,18 @@ export default function AccountList({
 
           <motion.button
             type="button"
-            onClick={() => { void handleUsageRefreshAll() }}
+            onClick={() => { void handleToolbarUpdateCredits() }}
             disabled={
-              usageRefreshLoading ||
+              toolbarCreditsUpdateLoading ||
               (!accounts.some(a => a.refApiKey) && !accounts.some(a => a.apiKey))
             }
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
+            title="按邮箱密码登录，更新 Ref 额度与邮箱验证状态、Context7 用量；不补绑 API、不自动发验证邮件"
             className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl border border-border/50 bg-background hover:bg-secondary transition-colors text-base font-medium disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
           >
-            <RefreshCw size={18} className={usageRefreshLoading ? 'animate-spin' : ''} />
-            刷新
+            <RefreshCw size={18} className={toolbarCreditsUpdateLoading ? 'animate-spin' : ''} />
+            更新
           </motion.button>
           
           <motion.button 

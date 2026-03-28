@@ -140,6 +140,29 @@ function sendLog(type: LogType, message: string): void {
     type,
     message
   })
+  if (process.env.NODE_ENV === 'development') {
+    const line = `[register:${type}] ${message}`
+    if (type === 'error') console.error(line)
+    else if (type === 'warning') console.warn(line)
+    else console.log(line)
+  }
+}
+
+function sendBatchMissLog(label: string, missParts: string[]): void {
+  if (!missParts.length) return
+  const batch = 6
+  for (let i = 0; i < missParts.length; i += batch) {
+    const tag = i === 0 ? `${label}：` : `${label}（续）：`
+    sendLog('warning', `${tag}${missParts.slice(i, i + batch).join('；')}`)
+  }
+}
+
+function logAccountBatchStep(
+  channel: 'Ref' | 'Context7',
+  p: { done: number; total: number; email: string; ok: boolean; error?: string }
+): void {
+  const tail = p.ok ? '成功' : `未获取${p.error ? `（${p.error}）` : ''}`
+  sendLog('info', `[账户管理] ${channel} [${p.done}/${p.total}] ${p.email} ${tail}`)
 }
 
 function createEmailService(
@@ -867,12 +890,21 @@ export async function registerIpcHandlers(window: BrowserWindow): Promise<void> 
 
   ipcMain.handle('accounts:fetchRefCreditsAll', async () => {
     if (isRefRegistrationRunning()) {
+      sendLog('warning', '[账户管理] 批量刷新 Ref 额度已跳过：Ref 注册进行中')
       return { results: {}, error: 'Ref 注册进行中' }
     }
     const withRef = database.getAllAccounts().filter(a => a.refApiKey)
+    sendLog('info', `[账户管理] 批量刷新 Ref 额度：${withRef.length} 个账号`)
+    if (withRef.length > 0) {
+      sendLog('info', '[账户管理] Ref：开始并行拉取（Firebase / 会话 / 额度）…')
+    }
     const results = await fetchAllRefCredits(
-      withRef.map(a => ({ id: a.id, email: a.email, password: a.password }))
+      withRef.map(a => ({ id: a.id, email: a.email, password: a.password })),
+      p => logAccountBatchStep('Ref', p)
     )
+    if (withRef.length > 0) {
+      sendLog('info', '[账户管理] Ref：拉取结束，写入本地数据库…')
+    }
     for (const [idStr, r] of Object.entries(results)) {
       const id = Number(idStr)
       if (r.credits !== null) database.updateAccountRefCredits(id, r.credits)
@@ -880,6 +912,21 @@ export async function registerIpcHandlers(window: BrowserWindow): Promise<void> 
         database.updateAccountRefEmailVerified(id, r.emailVerified)
       }
     }
+    const emailById = new Map(withRef.map(a => [a.id, a.email] as const))
+    const missParts: string[] = []
+    let ok = 0
+    let miss = 0
+    for (const [idStr, r] of Object.entries(results)) {
+      if (r.credits !== null) {
+        ok++
+        continue
+      }
+      miss++
+      const email = emailById.get(Number(idStr)) ?? `#${idStr}`
+      missParts.push(r.error ? `${email}（${r.error}）` : email)
+    }
+    sendLog('success', `[账户管理] Ref 额度刷新完成：${ok} 成功，${miss} 未获取`)
+    sendBatchMissLog('[账户管理] Ref 未获取', missParts)
     return { results }
   })
 
@@ -897,17 +944,41 @@ export async function registerIpcHandlers(window: BrowserWindow): Promise<void> 
 
   ipcMain.handle('accounts:fetchContext7RequestsAll', async () => {
     if (isRegistrationRunning()) {
+      sendLog('warning', '[账户管理] 批量刷新 Context7 用量已跳过：Context7 注册进行中')
       return { results: {}, error: 'Context7 注册进行中' }
     }
     const withCtx = database.getAllAccounts().filter(a => a.apiKey)
+    sendLog('info', `[账户管理] 批量刷新 Context7 用量：${withCtx.length} 个账号`)
+    if (withCtx.length > 0) {
+      sendLog('info', '[账户管理] Context7：开始并行拉取（会话校验 / Clerk / Dashboard 统计）…')
+    }
     const results = await fetchAllContext7Requests(
-      withCtx.map(a => ({ id: a.id, email: a.email, password: a.password }))
+      withCtx.map(a => ({ id: a.id, email: a.email, password: a.password })),
+      p => logAccountBatchStep('Context7', p)
     )
+    if (withCtx.length > 0) {
+      sendLog('info', '[账户管理] Context7：拉取结束，写入本地数据库…')
+    }
     for (const [idStr, r] of Object.entries(results)) {
       if (r.used !== null && r.limit !== null) {
         database.updateAccountContext7Requests(Number(idStr), r.used, r.limit)
       }
     }
+    const emailById = new Map(withCtx.map(a => [a.id, a.email] as const))
+    const missParts: string[] = []
+    let ok = 0
+    let miss = 0
+    for (const [idStr, r] of Object.entries(results)) {
+      if (r.used !== null && r.limit !== null) {
+        ok++
+        continue
+      }
+      miss++
+      const email = emailById.get(Number(idStr)) ?? `#${idStr}`
+      missParts.push(r.error ? `${email}（${r.error}）` : email)
+    }
+    sendLog('success', `[账户管理] Context7 用量刷新完成：${ok} 成功，${miss} 未获取`)
+    sendBatchMissLog('[账户管理] Context7 未获取', missParts)
     return { results }
   })
 
