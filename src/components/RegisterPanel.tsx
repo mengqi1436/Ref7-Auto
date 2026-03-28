@@ -12,7 +12,13 @@ import {
   RefreshCw,
   X,
 } from 'lucide-react'
-import type { AppSettings, LogEntry, EmailType, Account } from '../types'
+import type {
+  AppSettings,
+  LogEntry,
+  EmailType,
+  Account,
+  BatchRegistrationScope,
+} from '../types'
 
 interface RegisterPanelProps {
   settings: AppSettings | null
@@ -54,6 +60,29 @@ function validateSupplementalMailSettings(
   return null
 }
 
+const REGISTRATION_SCOPE_OPTIONS: {
+  value: BatchRegistrationScope
+  label: string
+}[] = [
+  { value: 'context7_only', label: '仅 Context7' },
+  { value: 'ref_only', label: '仅 Ref' },
+  { value: 'both', label: 'Context7 + Ref' },
+]
+
+function registrationScopeButtonClass(
+  selected: boolean,
+  accent: 'primary' | 'accent',
+): string {
+  const base =
+    'flex-1 min-w-0 py-2.5 px-2 rounded-lg text-sm font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed'
+  if (selected) {
+    return accent === 'primary'
+      ? `${base} bg-primary text-primary-foreground shadow-sm`
+      : `${base} bg-accent text-accent-foreground shadow-sm`
+  }
+  return `${base} text-muted-foreground hover:bg-secondary/80 hover:text-foreground`
+}
+
 function emailServiceCardClassName(
   isSelected: boolean,
   type: EmailType,
@@ -88,6 +117,8 @@ export default function RegisterPanel({
   const [showBrowser, setShowBrowser] = useState(
     settings?.registration.showBrowser ?? false,
   )
+  const [registrationScope, setRegistrationScope] =
+    useState<BatchRegistrationScope>('both')
   const logsEndRef = useRef<HTMLDivElement>(null)
   const isRunningRef = useRef(false)
 
@@ -109,6 +140,11 @@ export default function RegisterPanel({
   useEffect(() => {
     isRunningRef.current = isRegistering
   }, [isRegistering])
+  useEffect(() => {
+    if (ctx7AccountToRegister && registrationScope === 'ref_only') {
+      setRegistrationScope('both')
+    }
+  }, [ctx7AccountToRegister, registrationScope])
   useEffect(() => {
     logsEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [logs])
@@ -209,6 +245,7 @@ export default function RegisterPanel({
         intervalMin: settings.registration.intervalMin,
         intervalMax: settings.registration.intervalMax,
         showBrowser,
+        registrationScope,
       })
     } catch (error) {
       console.error('注册启动失败:', error)
@@ -216,7 +253,15 @@ export default function RegisterPanel({
       setIsRegistering(false)
       isRunningRef.current = false
     }
-  }, [settings, emailType, batchCount, showBrowser, setIsRegistering, addLog])
+  }, [
+    settings,
+    emailType,
+    batchCount,
+    showBrowser,
+    registrationScope,
+    setIsRegistering,
+    addLog,
+  ])
 
   const handleStop = useCallback(async () => {
     isRunningRef.current = false
@@ -291,7 +336,10 @@ export default function RegisterPanel({
         )
         setCtx7AccountToRegister?.(null)
 
-        if (!updatedAccount.refApiKey) {
+        if (
+          registrationScope === 'both' &&
+          !updatedAccount.refApiKey
+        ) {
           addLog('info', 'Context7 已完成，自动继续注册 Ref API...')
           await runRefRegistrationForAccount(updatedAccount)
         }
@@ -317,6 +365,7 @@ export default function RegisterPanel({
     setRefAccountToRegister,
     setAccounts,
     runRefRegistrationForAccount,
+    registrationScope,
   ])
 
   const ToggleSwitch = ({
@@ -423,6 +472,39 @@ export default function RegisterPanel({
                 </motion.button>
               </div>
 
+              <div className="space-y-3">
+                <label className="text-sm font-medium text-muted-foreground">
+                  注册范围
+                </label>
+                <div className="flex rounded-xl border border-primary/30 bg-primary/5 p-1 gap-1">
+                  {REGISTRATION_SCOPE_OPTIONS.map((opt) => (
+                    <motion.button
+                      key={opt.value}
+                      type="button"
+                      disabled={isRegistering || opt.value === 'ref_only'}
+                      title={
+                        opt.value === 'ref_only'
+                          ? '当前为 Context7 补绑，不可选择仅 Ref'
+                          : undefined
+                      }
+                      onClick={() => setRegistrationScope(opt.value)}
+                      whileHover={{
+                        scale: isRegistering || opt.value === 'ref_only' ? 1 : 1.01,
+                      }}
+                      whileTap={{
+                        scale: isRegistering || opt.value === 'ref_only' ? 1 : 0.99,
+                      }}
+                      className={registrationScopeButtonClass(
+                        registrationScope === opt.value,
+                        'primary',
+                      )}
+                    >
+                      {opt.label}
+                    </motion.button>
+                  ))}
+                </div>
+              </div>
+
               <div className="space-y-4">
                 <div className="p-4 rounded-xl bg-primary/5 border border-primary/20">
                   <p className="text-sm text-muted-foreground mb-1">目标账户</p>
@@ -440,9 +522,12 @@ export default function RegisterPanel({
                     <li>使用账户邮箱与密码提交注册</li>
                     <li>从邮箱读取验证码并完成验证</li>
                     <li>创建 Context7 API Key</li>
-                    {!ctx7AccountToRegister?.refApiKey && (
-                      <li>若无 Ref API，将在 Context7 成功后自动继续 Ref 注册</li>
-                    )}
+                    {registrationScope === 'both' &&
+                      !ctx7AccountToRegister?.refApiKey && (
+                        <li>
+                          若无 Ref API，将在 Context7 成功后自动继续 Ref 注册
+                        </li>
+                      )}
                   </ol>
                 </div>
               </div>
@@ -571,6 +656,34 @@ export default function RegisterPanel({
                     </span>
                   </motion.button>
                 </div>
+              </div>
+
+              <div className="space-y-3">
+                <label className="text-base font-medium text-muted-foreground">
+                  注册范围
+                </label>
+                <div className="flex rounded-xl border border-border/50 bg-secondary/30 p-1 gap-1">
+                  {REGISTRATION_SCOPE_OPTIONS.map((opt) => (
+                    <motion.button
+                      key={opt.value}
+                      type="button"
+                      disabled={isRegistering}
+                      onClick={() => setRegistrationScope(opt.value)}
+                      whileHover={{ scale: isRegistering ? 1 : 1.01 }}
+                      whileTap={{ scale: isRegistering ? 1 : 0.99 }}
+                      className={registrationScopeButtonClass(
+                        registrationScope === opt.value,
+                        'primary',
+                      )}
+                    >
+                      {opt.label}
+                    </motion.button>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  仅 Ref 将跳过 Context7，仅创建账户并执行 Ref 注册；收验证码与 Ref
+                  验证邮件仍依赖所选邮箱服务与设置。
+                </p>
               </div>
 
               <div className="space-y-4">

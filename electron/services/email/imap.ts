@@ -15,6 +15,25 @@ type ImapSearchCriteria = (string | [string, string | Date])[]
 
 const REF_WELCOME_SUBJECT = 'Welcome to Ref.'
 
+/** Ref 验证邮件常见主题（与官方发信一致，避免 broad 的 verify/email 误匹配） */
+const REF_VERIFY_SUBJECT_SNIPPETS = ['hello from ref', 'welcome to ref', 'verify your email'] as const
+
+function subjectLooksLikeRefVerification(subjectRaw: string): boolean {
+  const s = subjectRaw.trim().toLowerCase()
+  if (!s) return false
+  return REF_VERIFY_SUBJECT_SNIPPETS.some(sn => s.includes(sn))
+}
+
+const REF_TRASH_FOLDER_CANDIDATES = [
+  '[Gmail]/Trash',
+  'Trash',
+  'INBOX.Trash',
+  'Deleted',
+  'Deleted Items',
+  '已删除',
+  '[Gmail]/Bin'
+] as const
+
 export class ImapMailService {
   private config: ImapMailConfig
   private onLog?: (type: string, message: string) => void
@@ -288,105 +307,184 @@ export class ImapMailService {
     return null
   }
 
-  async getRefVerificationLink(targetEmail: string, timeout = 10000): Promise<string | null> {
+  /** 单次连接内轮询收件箱，避免每次重试重复 TLS/登录；totalBudgetMs 内每 pollEveryMs 搜索一次 */
+  async getRefVerificationLink(
+    targetEmail: string,
+    totalBudgetMs = 90_000,
+    pollEveryMs = 1200
+  ): Promise<string | null> {
     try {
-      return await Promise.race([
-        this.checkRefVerificationMail(targetEmail),
-        new Promise<null>(resolve => setTimeout(() => resolve(null), timeout))
-      ])
+      return await this.pollRefVerificationLink(targetEmail.trim(), totalBudgetMs, pollEveryMs)
     } catch {
       return null
     }
   }
 
-  private async checkRefVerificationMail(targetEmail: string): Promise<string | null> {
-    return new Promise((resolve, reject) => {
-      const timeoutId = setTimeout(() => resolve(null), 8000)
+  private refVerificationLinkableBody(content: string): boolean {
+    return (
+      /oobCode=/i.test(content) ||
+      /ref\.tools/i.test(content) ||
+      /firebaseapp\.com\/__\/auth/i.test(content)
+    )
+  }
+
+  /** 与「Hello from Ref」等官方信一致，且收件/内容指向当前注册邮箱，避免误抓其它 verify 邮件 */
+  private parsedIsRefVerificationForTarget(parsed: any, targetEmail: string): boolean {
+    const subject = typeof parsed.subject === 'string' ? parsed.subject : ''
+    const content = this.extractContent(parsed)
+    const contentLower = content.toLowerCase()
+    const t = targetEmail.trim().toLowerCase()
+    if (!t) return false
+
+    const addrOk =
+      this.matchesRecipient(parsed, targetEmail) || contentLower.includes(t)
+    if (!addrOk) return false
+
+    const subjHit = subjectLooksLikeRefVerification(subject)
+    const bodyHit = this.refVerificationLinkableBody(content)
+
+    if (subjHit && bodyHit) return true
+    if (subjHit && this.extractRefVerificationLink(content)) return true
+    if (bodyHit && this.extractRefVerificationLink(content)) return true
+    return false
+  }
+
+  private pollRefVerificationLink(
+    targetEmail: string,
+    totalBudgetMs: number,
+    pollEveryMs: number
+  ): Promise<string | null> {
+    return new Promise(resolve => {
+      const deadline = Date.now() + totalBudgetMs
       const imap = this.createConnection()
+      let timer: NodeJS.Timeout | null = null
+      const inboxPath = this.config.dir || 'INBOX'
 
-      imap.once('ready', () => {
-        imap.openBox(this.config.dir || 'INBOX', false, (err) => {
+      const finishNull = () => {
+        if (timer) clearTimeout(timer)
+        try {
+          imap.end()
+        } catch {}
+        resolve(null)
+      }
+
+      const scheduleTick = () => {
+        if (timer) clearTimeout(timer)
+        const wait = Math.min(pollEveryMs, Math.max(0, deadline - Date.now()))
+        if (wait <= 0) {
+          finishNull()
+          return
+        }
+        timer = setTimeout(tick, wait)
+      }
+
+      const searchTiersSince = (since: Date): ImapSearchCriteria[] => [
+        [['SINCE', since], ['SUBJECT', 'Hello from Ref']],
+        [['SINCE', since], ['SUBJECT', REF_WELCOME_SUBJECT]],
+        [['SINCE', since]]
+      ]
+
+      const runTieredSearchInOpenBox = (
+        tiers: ImapSearchCriteria[],
+        tierIdx: number,
+        onExhaustedThisBox: () => void
+      ): void => {
+        if (Date.now() >= deadline) {
+          finishNull()
+          return
+        }
+        if (tierIdx >= tiers.length) {
+          onExhaustedThisBox()
+          return
+        }
+        imap.search(tiers[tierIdx], (err, results) => {
           if (err) {
-            clearTimeout(timeoutId)
-            imap.end()
-            return reject(err)
+            runTieredSearchInOpenBox(tiers, tierIdx + 1, onExhaustedThisBox)
+            return
           }
-
-          const since = new Date(Date.now() - 10 * 60 * 1000) // 10 分钟内的邮件
-          // 搜索来自 Ref 的邮件
-          const searchCriteria: ImapSearchCriteria = [['SINCE', since]]
-
-          imap.search(searchCriteria, (err, results) => {
-            if (err || !results?.length) {
-              clearTimeout(timeoutId)
-              imap.end()
-              return resolve(null)
+          if (!results?.length) {
+            runTieredSearchInOpenBox(tiers, tierIdx + 1, onExhaustedThisBox)
+            return
+          }
+          void this.scanMailsForRefLink(imap, results, targetEmail).then(link => {
+            if (link) {
+              if (timer) clearTimeout(timer)
+              resolve(link)
+              return
             }
-
-            this.processRefVerificationMail(imap, results, targetEmail, timeoutId, resolve)
+            runTieredSearchInOpenBox(tiers, tierIdx + 1, onExhaustedThisBox)
           })
         })
-      })
+      }
 
-      imap.once('error', (err: Error) => {
-        clearTimeout(timeoutId)
-        reject(err)
-      })
+      const tryMailboxesSequence = (paths: readonly string[], pathIdx: number): void => {
+        if (Date.now() >= deadline) {
+          finishNull()
+          return
+        }
+        if (pathIdx >= paths.length) {
+          scheduleTick()
+          return
+        }
+        const since = new Date(Date.now() - 10 * 60 * 1000)
+        const tiers = searchTiersSince(since)
+        imap.openBox(paths[pathIdx], false, err => {
+          if (err) {
+            tryMailboxesSequence(paths, pathIdx + 1)
+            return
+          }
+          runTieredSearchInOpenBox(tiers, 0, () => tryMailboxesSequence(paths, pathIdx + 1))
+        })
+      }
 
+      const tick = () => {
+        if (Date.now() >= deadline) {
+          finishNull()
+          return
+        }
+        const paths = [inboxPath, ...REF_TRASH_FOLDER_CANDIDATES.filter(p => p !== inboxPath)]
+        tryMailboxesSequence(paths, 0)
+      }
+
+      imap.once('ready', () => tick())
+
+      imap.once('error', () => finishNull())
       imap.connect()
     })
   }
 
-  private processRefVerificationMail(
+  private scanMailsForRefLink(
     imap: Imap,
     results: number[],
-    targetEmail: string,
-    timeoutId: NodeJS.Timeout,
-    resolve: (value: string | null) => void
-  ) {
-    // 从最新的邮件开始检查
-    const sortedResults = [...results].reverse()
+    targetEmail: string
+  ): Promise<string | null> {
+    return new Promise(resolve => {
+      const sortedResults = [...results].reverse()
 
-    const checkNext = (index: number) => {
-      if (index >= sortedResults.length) {
-        clearTimeout(timeoutId)
-        imap.end()
-        return resolve(null)
-      }
+      const checkNext = (index: number) => {
+        if (index >= sortedResults.length) {
+          return resolve(null)
+        }
 
-      const msgId = sortedResults[index]
-      const fetch = imap.fetch([msgId], { bodies: '' })
+        const msgId = sortedResults[index]
+        const fetch = imap.fetch([msgId], { bodies: '' })
 
-      fetch.on('message', (msg) => {
-        msg.on('body', (stream: Readable) => {
-          simpleParser(stream, (err, parsed) => {
-            if (err) {
-              checkNext(index + 1)
-              return
-            }
+        fetch.on('message', msg => {
+          msg.on('body', (stream: Readable) => {
+            simpleParser(stream, (err, parsed) => {
+              if (err) {
+                checkNext(index + 1)
+                return
+              }
 
-            // 检查是否是 Ref 的邮件
-            const fromAddress = parsed.from?.value?.[0]?.address?.toLowerCase() || ''
-            const fromText = parsed.from?.text?.toLowerCase() || ''
-            const subject = parsed.subject?.toLowerCase() || ''
-            const isRefMail = fromAddress.includes('ref') ||
-                              fromText.includes('ref') ||
-                              subject.includes('verify') ||
-                              subject.includes('email') ||
-                              subject.includes('confirm')
+              const content = this.extractContent(parsed)
+              if (!this.parsedIsRefVerificationForTarget(parsed, targetEmail)) {
+                checkNext(index + 1)
+                return
+              }
 
-            const content = this.extractContent(parsed)
-            const shouldTryLink =
-              isRefMail ||
-              content.includes('oobCode=') ||
-              /ref\.tools/i.test(content) ||
-              /firebaseapp\.com\/__\/auth/i.test(content)
-
-            if (shouldTryLink) {
               const link = this.extractRefVerificationLink(content)
-
               if (link) {
-                clearTimeout(timeoutId)
                 imap.addFlags([msgId], ['\\Seen', '\\Deleted'], () => {
                   this.purgeWelcomeToRefMails(imap, () => {
                     imap.expunge(() => {
@@ -397,20 +495,19 @@ export class ImapMailService {
                 })
                 return
               }
-            }
 
-            // 继续检查下一封邮件
-            checkNext(index + 1)
+              checkNext(index + 1)
+            })
           })
         })
-      })
 
-      fetch.once('error', () => {
-        checkNext(index + 1)
-      })
-    }
+        fetch.once('error', () => {
+          checkNext(index + 1)
+        })
+      }
 
-    checkNext(0)
+      checkNext(0)
+    })
   }
 
   private sanitizeHrefLink(raw: string): string {

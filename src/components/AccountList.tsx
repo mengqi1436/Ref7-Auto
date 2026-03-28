@@ -255,7 +255,7 @@ export default function AccountList({
     }
   }, [accounts, usageRefreshLoading, onReloadAccounts])
 
-  const handleSingleUsageRefresh = useCallback(
+  const refreshRefVerificationFlow = useCallback(
     async (account: Account) => {
       const api = window.electronAPI
       if (!api || singleRefreshLoading.has(account.id) || !account.refApiKey) return
@@ -294,6 +294,91 @@ export default function AccountList({
       }
     },
     [singleRefreshLoading, onReloadAccounts]
+  )
+
+  const refreshBothCredits = useCallback(
+    async (account: Account) => {
+      const api = window.electronAPI
+      if (
+        !api ||
+        singleRefreshLoading.has(account.id) ||
+        !account.apiKey ||
+        !account.refApiKey
+      ) {
+        return
+      }
+      setSingleRefreshLoading(prev => new Set(prev).add(account.id))
+      try {
+        const [refR, ctxR] = await Promise.all([
+          api.fetchRefCredits(account.id),
+          api.fetchContext7Requests(account.id)
+        ])
+        await onReloadAccounts?.()
+        setRefCreditsByAccount(prev => {
+          const next = { ...prev }
+          if (refR) {
+            if (refR.credits !== null) delete next[account.id]
+            else {
+              next[account.id] = {
+                credits: refR.credits,
+                error: refR.error,
+                emailVerified: refR.emailVerified
+              }
+            }
+          }
+          return next
+        })
+        setCtx7RequestsByAccount(prev => {
+          const next = { ...prev }
+          if (ctxR) {
+            if (ctxR.used !== null && ctxR.limit !== null) delete next[account.id]
+            else next[account.id] = { used: ctxR.used, limit: ctxR.limit, error: ctxR.error }
+          }
+          return next
+        })
+      } finally {
+        setSingleRefreshLoading(prev => {
+          const next = new Set(prev)
+          next.delete(account.id)
+          return next
+        })
+      }
+    },
+    [singleRefreshLoading, onReloadAccounts]
+  )
+
+  const handleOperationRefresh = useCallback(
+    async (account: Account) => {
+      if (singleRefreshLoading.has(account.id) || inlineRegisterLoading.has(account.id)) return
+
+      if (account.apiKey && account.refApiKey) {
+        if (account.refEmailVerified === false) {
+          await refreshRefVerificationFlow(account)
+        } else {
+          await refreshBothCredits(account)
+        }
+        return
+      }
+
+      if (!onRefreshAccount) return
+      setInlineRegisterLoading(prev => new Set(prev).add(account.id))
+      try {
+        await onRefreshAccount(account)
+      } finally {
+        setInlineRegisterLoading(prev => {
+          const next = new Set(prev)
+          next.delete(account.id)
+          return next
+        })
+      }
+    },
+    [
+      singleRefreshLoading,
+      inlineRegisterLoading,
+      onRefreshAccount,
+      refreshRefVerificationFlow,
+      refreshBothCredits
+    ]
   )
 
   const toggleSelectAll = useCallback(() => {
@@ -657,24 +742,7 @@ export default function AccountList({
                       <div className="inline-flex items-center gap-1.5">
                         <motion.button
                           onClick={() => {
-                            if (account.apiKey && account.refApiKey) {
-                              void handleSingleUsageRefresh(account)
-                            } else {
-                              void (async () => {
-                                if (!onRefreshAccount) return
-                                if (inlineRegisterLoading.has(account.id)) return
-                                setInlineRegisterLoading(prev => new Set(prev).add(account.id))
-                                try {
-                                  await onRefreshAccount(account)
-                                } finally {
-                                  setInlineRegisterLoading(prev => {
-                                    const next = new Set(prev)
-                                    next.delete(account.id)
-                                    return next
-                                  })
-                                }
-                              })()
-                            }
+                            void handleOperationRefresh(account)
                           }}
                           disabled={
                             singleRefreshLoading.has(account.id) ||
@@ -686,13 +754,13 @@ export default function AccountList({
                           title={
                             account.apiKey && account.refApiKey
                               ? account.refEmailVerified === false
-                                ? '刷新 Ref（未验证时将重发验证邮件）'
-                                : '刷新 Ref 额度'
+                                ? 'Ref 邮箱未验证：走验证流程（含邮件）'
+                                : '已双绑：刷新 Context7 用量与 Ref 额度'
                               : account.apiKey
-                                ? '补充 Ref（直接走验证流程）'
+                                ? '有 Context7：补充 Ref（注册与验证）'
                                 : account.refApiKey
-                                  ? '补充 Context7'
-                                  : '补充 Context7（先绑 Context7）'
+                                  ? '有 Ref：补充 Context7 注册'
+                                  : '补充 Context7（优先）'
                           }
                         >
                           <RefreshCw

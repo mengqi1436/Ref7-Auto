@@ -3,6 +3,11 @@ import {
   refToolsCreateSession,
   firebaseSignInWithPassword
 } from './ref-credits'
+import {
+  describeFetchError,
+  NETWORK_RETRY_HINT,
+  userFacingNetworkMessage
+} from '../utils/describe-fetch-error'
 
 const IDENTITY_TOOLKIT_V1 = 'https://identitytoolkit.googleapis.com/v1' as const
 const REF_CLOUD_FUNCTIONS = 'https://us-central1-prod-ref.cloudfunctions.net' as const
@@ -58,11 +63,16 @@ export async function firebaseSignUp(
   { idToken: string; localId: string; refreshToken: string } | { error: string }
 > {
   const url = `${IDENTITY_TOOLKIT_V1}/accounts:signUp?key=${encodeURIComponent(apiKey)}`
-  const r = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password, returnSecureToken: true })
-  })
+  let r: Response
+  try {
+    r = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, returnSecureToken: true })
+    })
+  } catch (e) {
+    return { error: describeFetchError(e, 'accounts:signUp') }
+  }
   const data = (await r.json().catch(() => ({}))) as FirebaseHttpErrorBody & {
     idToken?: string
     localId?: string
@@ -271,35 +281,35 @@ export async function refApiRegisterFull(
     onLog?.(type, message)
   }
   try {
-    emit('info', '获取 Firebase API Key...')
     const webApiKey = await resolveFirebaseWebApiKey()
-    emit('info', '通过 API 注册账户...')
     const signUp = await firebaseSignUp(webApiKey, email, password)
     if ('error' in signUp) {
       if (!isFirebaseEmailAlreadyRegistered(signUp.error)) {
-        emit('error', signUp.error)
-        return { success: false, error: signUp.error }
+        const errOut = userFacingNetworkMessage(signUp.error)
+        emit('error', errOut)
+        return { success: false, error: errOut }
       }
-      emit('info', '该邮箱已在 Ref 注册，尝试密码登录...')
       const signIn = await firebaseSignInWithPassword(webApiKey, email, password)
       if ('error' in signIn) {
-        emit('error', signIn.error)
-        return { success: false, error: signIn.error }
+        const errOut = userFacingNetworkMessage(signIn.error)
+        emit('error', errOut)
+        return { success: false, error: errOut }
       }
-      emit('info', '建立 Ref 会话...')
       const sessExisting = await refToolsCreateSession(signIn.idToken)
       if ('error' in sessExisting) {
-        emit('error', sessExisting.error)
-        return { success: false, error: sessExisting.error }
+        const errOut = userFacingNetworkMessage(sessExisting.error)
+        emit('error', errOut)
+        return { success: false, error: errOut }
       }
       const consentExisting = await updateMarketingConsent(signIn.idToken, true)
       if ('error' in consentExisting) {
-        emit('warning', consentExisting.error)
+        emit('warning', userFacingNetworkMessage(consentExisting.error))
       }
       const lookup = await firebaseLookup(webApiKey, signIn.idToken)
       if ('error' in lookup) {
-        emit('error', lookup.error)
-        return { success: false, error: lookup.error }
+        const errOut = userFacingNetworkMessage(lookup.error)
+        emit('error', errOut)
+        return { success: false, error: errOut }
       }
       if (lookup.emailVerified) {
         emit('success', '邮箱已验证，跳过邮件验证')
@@ -310,11 +320,11 @@ export async function refApiRegisterFull(
           skipVerificationFlow: true
         }
       }
-      emit('info', '发送验证邮件...')
       const sentExisting = await firebaseSendVerificationEmail(webApiKey, signIn.idToken)
       if ('error' in sentExisting) {
-        emit('error', sentExisting.error)
-        return { success: false, error: sentExisting.error }
+        const errOut = userFacingNetworkMessage(sentExisting.error)
+        emit('error', errOut)
+        return { success: false, error: errOut }
       }
       emit('success', '验证邮件已发送')
       return {
@@ -324,23 +334,23 @@ export async function refApiRegisterFull(
         skipVerificationFlow: false
       }
     }
-    emit('info', '建立 Ref 会话...')
     const sess = await refToolsCreateSession(signUp.idToken)
     if ('error' in sess) {
-      emit('error', sess.error)
-      return { success: false, error: sess.error }
+      const errOut = userFacingNetworkMessage(sess.error)
+      emit('error', errOut)
+      return { success: false, error: errOut }
     }
-    emit('info', '更新营销偏好...')
     const consent = await updateMarketingConsent(signUp.idToken, true)
     if ('error' in consent) {
-      emit('error', consent.error)
-      return { success: false, error: consent.error }
+      const errOut = userFacingNetworkMessage(consent.error)
+      emit('error', errOut)
+      return { success: false, error: errOut }
     }
-    emit('info', '发送验证邮件...')
     const sent = await firebaseSendVerificationEmail(webApiKey, signUp.idToken)
     if ('error' in sent) {
-      emit('error', sent.error)
-      return { success: false, error: sent.error }
+      const errOut = userFacingNetworkMessage(sent.error)
+      emit('error', errOut)
+      return { success: false, error: errOut }
     }
     emit('success', '验证邮件已发送')
     return {
@@ -351,8 +361,9 @@ export async function refApiRegisterFull(
     }
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : '未知错误'
-    emit('error', message)
-    return { success: false, error: message }
+    const errOut = /fetch failed/i.test(message) ? NETWORK_RETRY_HINT : message
+    emit('error', errOut)
+    return { success: false, error: errOut }
   }
 }
 

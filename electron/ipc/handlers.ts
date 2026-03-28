@@ -5,7 +5,6 @@ import {
   initBrowser,
   registerAccount,
   inputVerificationCode,
-  createContext7ApiKey,
   closeBrowser,
   startRegistration,
   stopRegistration,
@@ -27,6 +26,7 @@ import {
   firebaseLookup,
   isInvalidOobCodeError
 } from '../services/ref-api'
+import { userFacingNetworkMessage } from '../utils/describe-fetch-error'
 import {
   fetchContext7AccountRequests,
   fetchAllContext7Requests,
@@ -41,6 +41,8 @@ import type { AccountStatus, EmailType } from '../services/database'
 
 type LogType = 'success' | 'error' | 'warning' | 'info'
 
+type BatchRegistrationScope = 'context7_only' | 'ref_only' | 'both'
+
 interface RegistrationConfig {
   emailType: EmailType
   count: number
@@ -48,6 +50,7 @@ interface RegistrationConfig {
   intervalMin: number
   intervalMax: number
   showBrowser: boolean
+  registrationScope?: BatchRegistrationScope
 }
 
 interface RefRegistrationConfig {
@@ -167,11 +170,9 @@ async function getVerificationCode(
   const maxRetries = 5
   const retryInterval = 10000
 
-  sendLog('info', `等待 ${initialWait / 1000} 秒后开始获取验证码...`)
   await delay(initialWait)
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    sendLog('info', `第 ${attempt}/${maxRetries} 次尝试获取验证码...`)
     const code = await emailService.getVerificationCode(email, 5000)
     if (code) return code
     if (attempt < maxRetries) {
@@ -186,21 +187,14 @@ async function getRefVerificationLink(
   settings: ReturnType<typeof database.getSettings>,
   email: string
 ): Promise<string | null> {
-  sendLog('info', '从邮箱获取验证链接...')
   const imapService = new ImapMailService(settings.imapMail)
-
-  for (let attempt = 1; attempt <= 10; attempt++) {
-    sendLog('info', `第 ${attempt}/10 次尝试获取验证链接...`)
-    try {
-      const link = await imapService.getRefVerificationLink(email, 10000)
-      if (link) {
-        sendLog('success', '获取到验证链接')
-        return link
-      }
-    } catch {}
-    if (attempt < 10) await delay(5000)
-  }
-
+  try {
+    const link = await imapService.getRefVerificationLink(email)
+    if (link) {
+      sendLog('success', '获取到验证链接')
+      return link
+    }
+  } catch {}
   sendLog('error', '获取验证链接超时')
   return null
 }
@@ -221,7 +215,6 @@ async function processRefVerificationLink(
         return { success: false, error: '验证链接协议不安全' }
       }
       await fetch(verificationLink, { redirect: 'follow' })
-      sendLog('info', '已访问验证链接')
     } catch {
       return { success: false, error: '验证链接访问失败' }
     }
@@ -230,7 +223,6 @@ async function processRefVerificationLink(
   const webApiKey = await resolveFirebaseWebApiKey()
 
   if (oobCode) {
-    sendLog('info', '提交验证并完成 Ref 绑定...')
     const completion = await refApiCompleteVerification(webApiKey, oobCode, idTokenForOob)
     if (!completion.success || !completion.apiKey) {
       const errMsg = completion.error || '验证完成但获取 API Key 失败'
@@ -286,7 +278,6 @@ async function processRefVerificationLink(
     }
   }
 
-  sendLog('info', '等待验证生效后获取 API Key...')
   await delay(3000)
   const signIn = await firebaseSignInWithPassword(webApiKey, email, password)
   if ('error' in signIn) {
@@ -324,7 +315,8 @@ async function persistRefCreditsAfterBind(
     }
     return { refCredits: r.credits, refCreditsUpdatedAt: new Date().toISOString() }
   }
-  if (r.error) sendLog('warning', `Ref 额度获取失败: ${r.error}`)
+  if (r.error)
+    sendLog('warning', `Ref 额度获取失败: ${userFacingNetworkMessage(r.error)}`)
   return undefined
 }
 
@@ -339,13 +331,15 @@ async function persistContext7RequestsAfterBind(
     sendLog('success', `Context7 用量已保存: ${r.used} / ${r.limit}`)
     return { used: r.used, limit: r.limit, updatedAt: new Date().toISOString() }
   }
-  if (r.error) sendLog('warning', `Context7 用量获取失败: ${r.error}`)
+  if (r.error)
+    sendLog('warning', `Context7 用量获取失败: ${userFacingNetworkMessage(r.error)}`)
   return undefined
 }
 
 async function handleRegistration(config: RegistrationConfig): Promise<void> {
   const settings = database.getSettings()
   const browserOptions = { headless: !config.showBrowser, onLog: sendLog }
+  const scope = config.registrationScope ?? 'both'
 
   startRegistration()
 
@@ -356,13 +350,32 @@ async function handleRegistration(config: RegistrationConfig): Promise<void> {
         break
       }
 
-      sendLog('info', `[${i + 1}/${config.count}] 开始注册第 ${i + 1} 个账户...`)
-
       const { email, emailService } = createEmailService(config, settings)
       const password = generatePassword(config.passwordLength)
       let usedBrowser = false
 
       try {
+        if (scope === 'ref_only') {
+          const account = database.addAccount({
+            email,
+            password,
+            emailType: config.emailType,
+            status: 'active',
+          })
+          const refResult = await handleRefRegistration({
+            accountId: account.id,
+            email,
+            password,
+            showBrowser: config.showBrowser,
+          })
+          if (!refResult.success) {
+            const err = userFacingNetworkMessage(refResult.error || '未知错误')
+            sendLog('warning', `Ref 注册未完成: ${err}，可在账户管理中补全`)
+          }
+          const synced = database.getAllAccounts().find(a => a.id === account.id) ?? account
+          mainWindow?.webContents.send('register:complete', synced)
+          sendLog('success', `账户 ${email} 注册成功！`)
+        } else {
         let sessionForKey: { cookieHeader: string; authorization?: string } | null = null
         let apiKey: string | undefined
         let apiKeyName: string | undefined
@@ -374,7 +387,6 @@ async function handleRegistration(config: RegistrationConfig): Promise<void> {
           sessionForKey = apiPrep.session
           sendLog('success', 'Clerk 注册已完成')
         } else if (apiPrep.ok) {
-          sendLog('info', '等待验证码邮件...')
           verificationCode = await getVerificationCode(emailService, email, config)
           if (!verificationCode) {
             sendLog('error', '获取验证码超时')
@@ -388,7 +400,7 @@ async function handleRegistration(config: RegistrationConfig): Promise<void> {
             email
           )
           if ('error' in ver) {
-            sendLog('warning', `API 验证失败: ${ver.error}，改用浏览器`)
+            sendLog('warning', `${userFacingNetworkMessage(ver.error)}，改用浏览器`)
             verificationCode = null
           } else {
             sessionForKey = ver
@@ -397,12 +409,7 @@ async function handleRegistration(config: RegistrationConfig): Promise<void> {
 
         if (!sessionForKey) {
           if (apiPrep.ok === false) {
-            sendLog(
-              'info',
-              apiPrep.needsBrowserFallback
-                ? '使用浏览器注册（人机验证）'
-                : `Clerk API: ${apiPrep.error}`
-            )
+            sendLog('warning', userFacingNetworkMessage(apiPrep.error))
           }
           await initBrowser(browserOptions)
           usedBrowser = true
@@ -412,7 +419,6 @@ async function handleRegistration(config: RegistrationConfig): Promise<void> {
             continue
           }
           if (verificationCode === null) {
-            sendLog('info', '等待验证码邮件...')
             verificationCode = await getVerificationCode(emailService, email, config)
           }
           if (!verificationCode) {
@@ -425,6 +431,8 @@ async function handleRegistration(config: RegistrationConfig): Promise<void> {
             sendLog('error', `账户 ${email} 验证失败`)
             continue
           }
+          await closeBrowser()
+          usedBrowser = false
           const est = await establishCtx7DashboardCookie(email, password)
           if (!('error' in est)) {
             sessionForKey = { cookieHeader: est.cookieHeader, authorization: est.authorization }
@@ -434,7 +442,7 @@ async function handleRegistration(config: RegistrationConfig): Promise<void> {
         if (sessionForKey) {
           const kr = await createContext7DashboardApiKey(sessionForKey)
           if (kr.success === false) {
-            sendLog('warning', kr.error)
+            sendLog('warning', userFacingNetworkMessage(kr.error))
           } else {
             apiKey = kr.apiKey
             apiKeyName = kr.keyName
@@ -442,20 +450,7 @@ async function handleRegistration(config: RegistrationConfig): Promise<void> {
           }
         }
 
-        if (!apiKey && usedBrowser) {
-          sendLog('info', '使用浏览器创建 API Key...')
-          const apiKeyResult = await createContext7ApiKey(browserOptions)
-          apiKey = apiKeyResult.apiKey
-          apiKeyName = apiKeyResult.keyName
-          if (apiKeyResult.success) {
-            sendLog(
-              apiKey ? 'success' : 'warning',
-              apiKey ? `API Key 创建成功: ${apiKey.slice(0, 12)}****` : 'API Key 已创建但未能获取完整值'
-            )
-          } else {
-            sendLog('warning', '获取 API Key 失败，账户仍然注册成功')
-          }
-        } else if (!apiKey && !usedBrowser) {
+        if (!apiKey) {
           sendLog('warning', '未能通过接口创建 API Key，可稍后在 Dashboard 补绑')
         }
 
@@ -469,31 +464,42 @@ async function handleRegistration(config: RegistrationConfig): Promise<void> {
         })
 
         await persistContext7RequestsAfterBind(account.id, email, password)
-        const synced = database.getAllAccounts().find(a => a.id === account.id) ?? account
 
-        mainWindow?.webContents.send('register:complete', {
-          ...synced,
-          apiKey,
-          apiKeyName
-        })
+        if (scope === 'both') {
+          const refResult = await handleRefRegistration({
+            accountId: account.id,
+            email,
+            password,
+            showBrowser: config.showBrowser
+          })
+          if (!refResult.success) {
+            const err = userFacingNetworkMessage(refResult.error || '未知错误')
+            sendLog('warning', `Ref 注册未完成: ${err}，可在账户管理中补全`)
+          }
+        }
+
+        const synced = database.getAllAccounts().find(a => a.id === account.id) ?? account
+        mainWindow?.webContents.send('register:complete', synced)
         sendLog('success', `账户 ${email} 注册成功！`)
+        }
       } finally {
         if (usedBrowser) {
-          sendLog('info', '正在关闭浏览器...')
           await closeBrowser()
         }
       }
 
       if (i < config.count - 1 && isRegistrationRunning()) {
         const interval = randomInt(config.intervalMin, config.intervalMax)
-        sendLog('info', `等待 ${interval} 秒后继续下一个账户...`)
         await delay(interval * 1000)
       }
     }
 
     sendLog('success', '批量注册任务完成')
   } catch (error: unknown) {
-    mainWindow?.webContents.send('register:error', getErrorMessage(error))
+    mainWindow?.webContents.send(
+      'register:error',
+      userFacingNetworkMessage(getErrorMessage(error))
+    )
     await closeBrowser()
   } finally {
     stopRegistration()
@@ -510,7 +516,7 @@ async function handleRefRegistration(config: RefRegistrationConfig): Promise<Ref
   if (!email && settings.imapMail.domain) {
     email = generateRandomEmail(settings.imapMail.domain)
     password = generatePassword(settings.registration.passwordLength)
-    sendLog('info', `生成随机邮箱: ${email}`)
+    sendLog('success', `邮箱: ${email}`)
   }
 
   if (!email || !password) {
@@ -518,8 +524,6 @@ async function handleRefRegistration(config: RefRegistrationConfig): Promise<Ref
   }
 
   try {
-    sendLog('info', `开始为 ${email} 通过 API 注册 Ref...`)
-
     const regResult = await refApiRegisterFull(email, password, sendLog)
     if (!regResult.success || !regResult.idToken) {
       return { success: false, error: regResult.error || 'Ref API 注册失败' }
@@ -541,8 +545,7 @@ async function handleRefRegistration(config: RefRegistrationConfig): Promise<Ref
       }
     }
 
-    sendLog('success', 'Ref 账户注册成功，等待验证邮件...')
-    await delay(5000)
+    await delay(2000)
 
     const verificationLink = await getRefVerificationLink(settings, email)
     if (!verificationLink) {
@@ -552,8 +555,9 @@ async function handleRefRegistration(config: RefRegistrationConfig): Promise<Ref
     return processRefVerificationLink(accountId, email, password, verificationLink, regResult.idToken)
   } catch (error: unknown) {
     const message = getErrorMessage(error)
-    sendLog('error', `Ref 注册出错: ${message}`)
-    return { success: false, error: message }
+    const shown = userFacingNetworkMessage(message)
+    sendLog('error', `Ref 注册出错: ${shown}`)
+    return { success: false, error: shown }
   }
 }
 
@@ -565,7 +569,6 @@ async function handleContext7Registration(config: Context7RegistrationConfig): P
   const password = config.password
 
   try {
-    sendLog('info', `开始为 ${email} 注册 Context7...`)
     let sessionForKey: { cookieHeader: string; authorization?: string } | null = null
     let apiKey: string | undefined
     let apiKeyName: string | undefined
@@ -581,7 +584,6 @@ async function handleContext7Registration(config: Context7RegistrationConfig): P
         config.emailType === 'tempmail_plus'
           ? new TempMailPlusService(settings.tempMailPlus)
           : new ImapMailService(settings.imapMail)
-      sendLog('info', '等待验证码邮件...')
       verificationCode = await getVerificationCode(emailService, email, {
         emailType: config.emailType
       } as RegistrationConfig)
@@ -591,7 +593,7 @@ async function handleContext7Registration(config: Context7RegistrationConfig): P
       sendLog('success', `验证码: ${verificationCode}`)
       const ver = await registerContext7ClerkVerifyAndSession(apiPrep.jar, apiPrep.signUpId, verificationCode, email)
       if ('error' in ver) {
-        sendLog('warning', `API 验证失败: ${ver.error}，改用浏览器`)
+        sendLog('warning', `${userFacingNetworkMessage(ver.error)}，改用浏览器`)
         verificationCode = null
       } else {
         sessionForKey = ver
@@ -600,10 +602,7 @@ async function handleContext7Registration(config: Context7RegistrationConfig): P
 
     if (!sessionForKey) {
       if (apiPrep.ok === false) {
-        sendLog(
-          'info',
-          apiPrep.needsBrowserFallback ? '使用浏览器注册（人机验证）' : `Clerk API: ${apiPrep.error}`
-        )
+        sendLog('warning', userFacingNetworkMessage(apiPrep.error))
       }
       await initBrowser(browserOptions)
       usedBrowser = true
@@ -617,7 +616,6 @@ async function handleContext7Registration(config: Context7RegistrationConfig): P
           ? new TempMailPlusService(settings.tempMailPlus)
           : new ImapMailService(settings.imapMail)
       if (verificationCode === null) {
-        sendLog('info', '等待验证码邮件...')
         verificationCode = await getVerificationCode(emailService, email, {
           emailType: config.emailType
         } as RegistrationConfig)
@@ -632,6 +630,8 @@ async function handleContext7Registration(config: Context7RegistrationConfig): P
         await closeBrowser()
         return { success: false, error: '验证失败' }
       }
+      await closeBrowser()
+      usedBrowser = false
       const est = await establishCtx7DashboardCookie(email, password)
       if (!('error' in est)) {
         sessionForKey = { cookieHeader: est.cookieHeader, authorization: est.authorization }
@@ -641,23 +641,12 @@ async function handleContext7Registration(config: Context7RegistrationConfig): P
     if (sessionForKey) {
       const kr = await createContext7DashboardApiKey(sessionForKey)
       if (kr.success === false) {
-        sendLog('warning', kr.error)
+        sendLog('warning', userFacingNetworkMessage(kr.error))
       } else {
         apiKey = kr.apiKey
         apiKeyName = kr.keyName
         sendLog('success', `API Key 创建成功: ${apiKey.slice(0, 12)}****`)
       }
-    }
-
-    if (!apiKey && usedBrowser) {
-      sendLog('info', '使用浏览器创建 API Key...')
-      const apiKeyResult = await createContext7ApiKey(browserOptions)
-      apiKey = apiKeyResult.apiKey
-      apiKeyName = apiKeyResult.keyName
-    }
-
-    if (usedBrowser) {
-      await closeBrowser()
     }
 
     if (apiKey) {
@@ -682,12 +671,16 @@ async function handleContext7Registration(config: Context7RegistrationConfig): P
       }
     }
 
+    if (!apiKey) {
+      sendLog('warning', '未能通过接口创建 API Key，可稍后在 Dashboard 补绑')
+    }
     return { success: false, error: '获取 API Key 失败' }
   } catch (error: unknown) {
     if (usedBrowser) await closeBrowser()
     const message = getErrorMessage(error)
-    sendLog('error', `Context7 注册出错: ${message}`)
-    return { success: false, error: message }
+    const shown = userFacingNetworkMessage(message)
+    sendLog('error', `Context7 注册出错: ${shown}`)
+    return { success: false, error: shown }
   }
 }
 
@@ -736,21 +729,19 @@ export async function registerIpcHandlers(window: BrowserWindow): Promise<void> 
         acc.refApiKey &&
         r.emailVerified === false
       ) {
-        sendLog('info', `[账户管理] Ref 邮箱未验证，开始补全验证: ${acc.email}`)
-        sendLog('info', '发送验证邮件...')
         const sent = await resendRefVerificationEmail({ email: acc.email, password: acc.password })
         if ('error' in sent) {
-          sendLog('error', `发送验证邮件失败: ${sent.error}`)
+          const err = userFacingNetworkMessage(sent.error)
+          sendLog('error', `发送验证邮件失败: ${err}`)
           return {
             credits: r.credits,
             emailVerified: r.emailVerified,
-            error: `发送验证邮件失败: ${sent.error}`
+            error: `发送验证邮件失败: ${err}`
           }
         }
         verificationEmailSent = true
         sendLog('success', '验证邮件已发送')
-        sendLog('info', '等待验证邮件投递…')
-        await delay(5000)
+        await delay(2000)
         const settings = database.getSettings()
         const link = await getRefVerificationLink(settings, acc.email)
         if (!link) {
@@ -762,15 +753,15 @@ export async function registerIpcHandlers(window: BrowserWindow): Promise<void> 
             verificationEmailSent
           }
         }
-        sendLog('info', '登录 Firebase 并提交邮箱验证…')
         const webApiKey = await resolveFirebaseWebApiKey()
         const signIn = await firebaseSignInWithPassword(webApiKey, acc.email, acc.password)
         if ('error' in signIn) {
-          sendLog('error', `Firebase 登录失败: ${signIn.error}`)
+          const err = userFacingNetworkMessage(signIn.error)
+          sendLog('error', `Firebase 登录失败: ${err}`)
           return {
             credits: r.credits,
             emailVerified: r.emailVerified,
-            error: signIn.error,
+            error: err,
             verificationEmailSent
           }
         }
@@ -782,11 +773,12 @@ export async function registerIpcHandlers(window: BrowserWindow): Promise<void> 
           signIn.idToken
         )
         if (!fin.success) {
-          sendLog('error', fin.error || 'Ref 验证失败')
+          const err = userFacingNetworkMessage(fin.error || 'Ref 验证失败')
+          sendLog('error', err)
           return {
             credits: r.credits,
             emailVerified: false,
-            error: fin.error,
+            error: err,
             verificationEmailSent
           }
         }

@@ -38,22 +38,30 @@ function App() {
     setCurrentPage(page)
   }, [])
 
-  const addNotification = useCallback((type: NotificationType, message: string) => {
-    const notification: NotificationItem = {
-      id: Date.now().toString() + Math.random().toString(36).slice(2),
-      type,
-      message,
-      timestamp: Date.now()
-    }
-    setNotifications(prev => [...prev.slice(-4), notification])
-    
-    setLogs(prev => [...prev, {
-      id: notification.id,
-      timestamp: new Date().toLocaleTimeString(),
-      type: type === 'info' ? 'info' : type,
-      message
-    }])
-  }, [])
+  const addNotification = useCallback(
+    (type: NotificationType, message: string, options?: { skipLog?: boolean }) => {
+      const notification: NotificationItem = {
+        id: Date.now().toString() + Math.random().toString(36).slice(2),
+        type,
+        message,
+        timestamp: Date.now()
+      }
+      setNotifications(prev => [...prev.slice(-4), notification])
+
+      if (!options?.skipLog) {
+        setLogs(prev => [
+          ...prev,
+          {
+            id: notification.id,
+            timestamp: new Date().toLocaleTimeString(),
+            type: type === 'info' ? 'info' : type,
+            message
+          }
+        ])
+      }
+    },
+    []
+  )
 
   const dismissNotification = useCallback((id: string) => {
     setNotifications(prev => prev.filter(n => n.id !== id))
@@ -176,7 +184,7 @@ function App() {
     const unsubLog = window.electronAPI?.onRegistrationLog?.((log) => setLogs(prev => [...prev, log]))
     const unsubComplete = window.electronAPI?.onRegistrationComplete?.((account) => {
       setAccounts(prev => [account, ...prev])
-      addNotification('success', `账户 ${account.email} 注册成功！`)
+      addNotification('success', `账户 ${account.email} 注册成功！`, { skipLog: true })
     })
     const unsubError = window.electronAPI?.onRegistrationError?.((error) => {
       addNotification('error', error)

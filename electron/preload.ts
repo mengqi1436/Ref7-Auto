@@ -25,6 +25,8 @@ interface Account {
   ctx7RequestsUpdatedAt?: string
 }
 
+type BatchRegistrationScope = 'context7_only' | 'ref_only' | 'both'
+
 interface RegistrationConfig {
   emailType: EmailType
   count: number
@@ -32,6 +34,7 @@ interface RegistrationConfig {
   intervalMin: number
   intervalMax: number
   showBrowser: boolean
+  registrationScope?: BatchRegistrationScope
 }
 
 interface RefRegistrationConfig {

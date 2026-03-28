@@ -1,3 +1,5 @@
+import { describeFetchError } from '../utils/describe-fetch-error'
+
 export const REF_ORIGIN = 'https://ref.tools'
 const REF_LOGIN_URL = `${REF_ORIGIN}/login`
 const REF_ACCOUNT_URL = `${REF_ORIGIN}/account`
@@ -154,15 +156,20 @@ export async function firebaseSignInWithPassword(
   password: string
 ): Promise<{ idToken: string; localId: string } | { error: string }> {
   const url = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${encodeURIComponent(apiKey)}`
-  const r = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      email,
-      password,
-      returnSecureToken: true
+  let r: Response
+  try {
+    r = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email,
+        password,
+        returnSecureToken: true
+      })
     })
-  })
+  } catch (e) {
+    return { error: describeFetchError(e, 'accounts:signInWithPassword') }
+  }
   const data = (await r.json()) as {
     idToken?: string
     localId?: string
@@ -174,15 +181,20 @@ export async function firebaseSignInWithPassword(
 }
 
 export async function refToolsCreateSession(idToken: string): Promise<{ cookie: string } | { error: string }> {
-  const r = await fetch(REF_API_SESSION, {
-    method: 'POST',
-    headers: {
-      ...REF_FETCH_HEADERS,
-      'Content-Type': 'application/json',
-      Accept: 'application/json'
-    },
-    body: JSON.stringify({ idToken })
-  })
+  let r: Response
+  try {
+    r = await fetch(REF_API_SESSION, {
+      method: 'POST',
+      headers: {
+        ...REF_FETCH_HEADERS,
+        'Content-Type': 'application/json',
+        Accept: 'application/json'
+      },
+      body: JSON.stringify({ idToken })
+    })
+  } catch (e) {
+    return { error: describeFetchError(e, 'ref.tools/api/auth/session') }
+  }
   const sessionVal = parseSessionValueFromSetCookie(r.headers)
   if (!sessionVal) {
     const text = await r.text().catch(() => '')

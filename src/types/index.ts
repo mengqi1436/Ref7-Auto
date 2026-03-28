@@ -22,6 +22,9 @@ export type AccountStatus = 'active' | 'pending' | 'invalid'
 export type EmailType = 'tempmail_plus' | 'imap'
 export type EmailProtocol = 'IMAP' | 'POP3'
 
+/** 批量注册目标：未传时主进程视为 both，兼容旧客户端 */
+export type BatchRegistrationScope = 'context7_only' | 'ref_only' | 'both'
+
 export interface RegistrationConfig {
   emailType: EmailType
   count: number
@@ -29,6 +32,7 @@ export interface RegistrationConfig {
   intervalMin: number
   intervalMax: number
   showBrowser: boolean
+  registrationScope?: BatchRegistrationScope
 }
 
 export interface RefRegistrationConfig {
