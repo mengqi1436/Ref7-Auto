@@ -1,4 +1,8 @@
 import https from 'https'
+import {
+  detectContext7ExistingAccountMail,
+  type Context7InboxResult
+} from '../../utils/context7-mail'
 
 interface TempMailPlusConfig {
   username: string
@@ -43,6 +47,14 @@ export class TempMailPlusService {
   }
 
   async getVerificationCode(maxRetries = 5, retryInterval = 2000): Promise<string | null> {
+    const r = await this.getContext7RegistrationMailResult(maxRetries, retryInterval)
+    return r?.kind === 'otp' ? r.code : null
+  }
+
+  async getContext7RegistrationMailResult(
+    maxRetries = 5,
+    retryInterval = 2000
+  ): Promise<Context7InboxResult | null> {
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       try {
         const mailList = await this.getMailList()
@@ -57,10 +69,17 @@ export class TempMailPlusService {
           continue
         }
 
-        const code = this.extractVerificationCode(mailDetail.text)
+        const subject = mailDetail.subject ?? ''
+        const body = mailDetail.text
+        if (detectContext7ExistingAccountMail(subject, body)) {
+          await this.deleteMail(mailList.first_id)
+          return { kind: 'existing_account' }
+        }
+
+        const code = this.extractVerificationCode(body)
         if (code) {
           await this.deleteMail(mailList.first_id)
-          return code
+          return { kind: 'otp', code }
         }
 
         await this.delay(retryInterval)

@@ -1,6 +1,10 @@
 import Imap from 'imap'
 import { simpleParser } from 'mailparser'
 import type { Readable } from 'stream'
+import {
+  detectContext7ExistingAccountMail,
+  type Context7InboxResult
+} from '../../utils/context7-mail'
 
 interface ImapMailConfig {
   server: string
@@ -88,9 +92,17 @@ export class ImapMailService {
   }
 
   async getVerificationCode(targetEmail: string, timeout = 10000): Promise<string | null> {
+    const r = await this.getContext7RegistrationMailResult(targetEmail, timeout)
+    return r?.kind === 'otp' ? r.code : null
+  }
+
+  async getContext7RegistrationMailResult(
+    targetEmail: string,
+    timeout = 10000
+  ): Promise<Context7InboxResult | null> {
     try {
       return await Promise.race([
-        this.checkLatestMail(targetEmail),
+        this.checkLatestContext7Mail(targetEmail),
         new Promise<null>(resolve => setTimeout(() => resolve(null), timeout))
       ])
     } catch {
@@ -98,7 +110,18 @@ export class ImapMailService {
     }
   }
 
-  private async checkLatestMail(targetEmail: string): Promise<string | null> {
+  private ctx7FromSearchTiers(since: Date): Parameters<Imap['search']>[0][] {
+    return [
+      [
+        ['SINCE', since],
+        ['OR', ['FROM', 'notifications@context7.com'], ['FROM', 'noreply@context7.com']]
+      ],
+      ['UNSEEN', ['SINCE', since]],
+      ['ALL', ['SINCE', since]]
+    ]
+  }
+
+  private async checkLatestContext7Mail(targetEmail: string): Promise<Context7InboxResult | null> {
     return new Promise((resolve, reject) => {
       const timeoutId = setTimeout(() => resolve(null), 8000)
       const imap = this.createConnection()
@@ -112,32 +135,24 @@ export class ImapMailService {
           }
 
           const since = new Date(Date.now() - 5 * 60 * 1000)
-          // 搜索来自 Context7 的邮件
-          const searchCriteria: ImapSearchCriteria = [['FROM', 'notifications@context7.com'], ['SINCE', since]]
+          const tiers = this.ctx7FromSearchTiers(since)
 
-          imap.search(searchCriteria, (err, results) => {
-            if (err || !results?.length) {
-              // 如果没找到，尝试搜索所有最近的未读邮件
-              imap.search(['UNSEEN', ['SINCE', since]], (err2, results2) => {
-                if (err2 || !results2?.length) {
-                  // 最后尝试搜索所有最近邮件
-                  imap.search(['ALL', ['SINCE', since]], (err3, results3) => {
-                    if (err3 || !results3?.length) {
-                      clearTimeout(timeoutId)
-                      imap.end()
-                      return resolve(null)
-                    }
-                    this.processLatestMail(imap, results3, targetEmail, timeoutId, resolve)
-                  })
-                  return
-                }
-                this.processLatestMail(imap, results2, targetEmail, timeoutId, resolve)
-              })
-              return
+          const runTier = (tierIdx: number) => {
+            if (tierIdx >= tiers.length) {
+              clearTimeout(timeoutId)
+              imap.end()
+              return resolve(null)
             }
+            imap.search(tiers[tierIdx], (searchErr, results) => {
+              if (searchErr || !results?.length) {
+                runTier(tierIdx + 1)
+                return
+              }
+              this.processLatestContext7Inbox(imap, results, targetEmail, timeoutId, resolve)
+            })
+          }
 
-            this.processLatestMail(imap, results, targetEmail, timeoutId, resolve)
-          })
+          runTier(0)
         })
       })
 
@@ -150,14 +165,60 @@ export class ImapMailService {
     })
   }
 
-  private processLatestMail(
+  private parseContext7InboxFromParsed(
+    parsed: { subject?: string; from?: { value?: Array<{ address?: string }>; text?: string } },
+    targetEmail: string
+  ): Context7InboxResult | 'skip' {
+    const fromAddress = parsed.from?.value?.[0]?.address?.toLowerCase() || ''
+    const fromText = parsed.from?.text?.toLowerCase() || ''
+    const subjectLower = (typeof parsed.subject === 'string' ? parsed.subject : '').toLowerCase()
+    const isContext7Mail =
+      fromAddress.includes('context7.com') ||
+      fromText.includes('context7') ||
+      fromText.includes('clerk') ||
+      subjectLower.includes('verification') ||
+      subjectLower.includes('code') ||
+      subjectLower.includes('sign up attempt')
+
+    if (!isContext7Mail) return 'skip'
+
+    const content = this.extractContent(parsed)
+    const subjectRaw = typeof parsed.subject === 'string' ? parsed.subject : ''
+    if (detectContext7ExistingAccountMail(subjectRaw, content)) {
+      return { kind: 'existing_account' }
+    }
+
+    const cleanContent = content.replace(new RegExp(targetEmail, 'gi'), '')
+    const code = this.extractVerificationCode(cleanContent)
+    if (code) return { kind: 'otp', code }
+    return 'skip'
+  }
+
+  private finishContext7InboxSuccess(
+    imap: Imap,
+    msgId: number,
+    timeoutId: NodeJS.Timeout,
+    value: Context7InboxResult,
+    resolve: (v: Context7InboxResult | null) => void
+  ): void {
+    clearTimeout(timeoutId)
+    imap.addFlags([msgId], ['\\Seen', '\\Deleted'], () => {
+      this.purgeWelcomeToRefMails(imap, () => {
+        imap.expunge(() => {
+          imap.end()
+          resolve(value)
+        })
+      })
+    })
+  }
+
+  private processLatestContext7Inbox(
     imap: Imap,
     results: number[],
     targetEmail: string,
     timeoutId: NodeJS.Timeout,
-    resolve: (value: string | null) => void
+    resolve: (value: Context7InboxResult | null) => void
   ) {
-    // 从最新的邮件开始检查
     const sortedResults = [...results].reverse()
 
     const checkNext = (index: number) => {
@@ -178,42 +239,13 @@ export class ImapMailService {
               return
             }
 
-            // 检查是否是 Context7 的邮件
-            const fromAddress = parsed.from?.value?.[0]?.address?.toLowerCase() || ''
-            const fromText = parsed.from?.text?.toLowerCase() || ''
-            const subject = parsed.subject?.toLowerCase() || ''
-            const isContext7Mail = fromAddress === 'notifications@context7.com' ||
-                                   fromText.includes('context7') ||
-                                   fromText.includes('clerk') ||
-                                   subject.includes('verification') ||
-                                   subject.includes('code')
-
-            // 检查收件人匹配或内容包含目标邮箱
-            const matchesTarget = this.matchesRecipient(parsed, targetEmail)
-            const content = this.extractContent(parsed)
-            const contentHasEmail = content.toLowerCase().includes(targetEmail.toLowerCase())
-
-            // 如果是 Context7 邮件，直接提取验证码（不严格检查收件人）
-            if (isContext7Mail) {
-              const cleanContent = content.replace(new RegExp(targetEmail, 'gi'), '')
-              const code = this.extractVerificationCode(cleanContent)
-
-              if (code) {
-                clearTimeout(timeoutId)
-                imap.addFlags([msgId], ['\\Seen', '\\Deleted'], () => {
-                  this.purgeWelcomeToRefMails(imap, () => {
-                    imap.expunge(() => {
-                      imap.end()
-                      resolve(code)
-                    })
-                  })
-                })
-                return
-              }
+            const outcome = this.parseContext7InboxFromParsed(parsed, targetEmail)
+            if (outcome === 'skip') {
+              checkNext(index + 1)
+              return
             }
 
-            // 继续检查下一封邮件
-            checkNext(index + 1)
+            this.finishContext7InboxSuccess(imap, msgId, timeoutId, outcome, resolve)
           })
         })
       })

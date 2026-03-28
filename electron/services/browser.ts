@@ -29,6 +29,7 @@ interface PuppeteerPage {
   $$(selector: string): Promise<PuppeteerElement[]>
   evaluate<T>(fn: () => T): Promise<T>
   evaluate<T, A>(fn: (arg: A) => T, arg: A): Promise<T>
+  cookies(...urls: string[]): Promise<Array<{ name: string; value: string }>>
   mouse: { move(x: number, y: number): Promise<void> }
   setExtraHTTPHeaders(headers: Record<string, string>): Promise<void>
 }
@@ -52,6 +53,11 @@ let isRunning = false
 
 const REGISTER_URL = 'https://context7.com/sign-up'
 const DASHBOARD_URL = 'https://context7.com/dashboard'
+const CTX7_SESSION_COOKIE_URLS = [
+  'https://context7.com',
+  'https://clerk.context7.com',
+  'https://accounts.context7.com'
+] as const
 const TURNSTILE_TIMEOUT = 120000
 
 const BROWSER_ARGS = [
@@ -286,6 +292,55 @@ export async function registerAccount(data: RegistrationData, options: BrowserSe
   } catch (error: unknown) {
     options.onLog('error', `注册过程出错: ${getErrorMessage(error)}`)
     return false
+  }
+}
+
+function cookieJarHasSessionCookie(jar: Map<string, string>): boolean {
+  for (const k of jar.keys()) {
+    if (k === '__session' || k.startsWith('__session_')) return true
+  }
+  return false
+}
+
+export async function extractContext7DashboardSessionForFetch(
+  options: BrowserServiceOptions
+): Promise<{ cookieHeader: string; authorization?: string } | null> {
+  if (!page) {
+    options.onLog('warning', '无法同步会话：浏览器页面不可用')
+    return null
+  }
+  try {
+    const lists = await Promise.all(
+      CTX7_SESSION_COOKIE_URLS.map(u => page!.cookies(u).catch(() => [] as { name: string; value: string }[]))
+    )
+    const jar = new Map<string, string>()
+    for (const list of lists) {
+      for (const c of list) {
+        if (c?.name) jar.set(c.name, c.value ?? '')
+      }
+    }
+    if (!cookieJarHasSessionCookie(jar)) {
+      options.onLog('warning', '浏览器未找到 Clerk 会话 Cookie（__session），跳过同步')
+      return null
+    }
+    const cookieHeader = [...jar.entries()].map(([k, v]) => `${k}=${v}`).join('; ')
+    let authorization: string | undefined
+    const token = await page.evaluate(async () => {
+      try {
+        const w = window as unknown as {
+          Clerk?: { session?: { getToken?: () => Promise<string | undefined> } }
+        }
+        const t = await w.Clerk?.session?.getToken?.()
+        return typeof t === 'string' && t.length > 0 ? t : null
+      } catch {
+        return null
+      }
+    })
+    if (token) authorization = `Bearer ${token}`
+    return { cookieHeader, authorization }
+  } catch (error: unknown) {
+    options.onLog('warning', `从浏览器提取会话失败: ${getErrorMessage(error)}`)
+    return null
   }
 }
 

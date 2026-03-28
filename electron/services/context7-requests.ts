@@ -459,6 +459,13 @@ function cacheCtx7Session(email: string, cookieHeader: string, authorization?: s
   sessionByEmail.set(email.toLowerCase(), { cookieHeader, authorization })
 }
 
+export function rememberContext7DashboardSession(
+  email: string,
+  session: { cookieHeader: string; authorization?: string }
+): void {
+  cacheCtx7Session(email, session.cookieHeader, session.authorization)
+}
+
 export async function registerContext7ClerkSendEmailCode(
   email: string,
   password: string

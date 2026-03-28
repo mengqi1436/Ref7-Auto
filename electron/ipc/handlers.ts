@@ -6,6 +6,7 @@ import {
   registerAccount,
   inputVerificationCode,
   closeBrowser,
+  extractContext7DashboardSessionForFetch,
   startRegistration,
   stopRegistration,
   isRegistrationRunning
@@ -27,13 +28,15 @@ import {
   isInvalidOobCodeError
 } from '../services/ref-api'
 import { userFacingNetworkMessage } from '../utils/describe-fetch-error'
+import type { Context7InboxResult } from '../utils/context7-mail'
 import {
   fetchContext7AccountRequests,
   fetchAllContext7Requests,
   registerContext7ClerkSendEmailCode,
   registerContext7ClerkVerifyAndSession,
   createContext7DashboardApiKey,
-  establishCtx7DashboardCookie
+  establishCtx7DashboardCookie,
+  rememberContext7DashboardSession
 } from '../services/context7-requests'
 import { TempMailPlusService } from '../services/email/tempmailplus'
 import { ImapMailService } from '../services/email/imap'
@@ -155,30 +158,58 @@ function createEmailService(
   return { email, emailService }
 }
 
-async function getVerificationCode(
+type Ctx7SessionEntry = { cookieHeader: string; authorization?: string }
+
+async function pollContext7RegistrationMail(
   emailService: TempMailPlusService | ImapMailService,
   email: string,
   config: RegistrationConfig
-): Promise<string | null> {
+): Promise<Context7InboxResult | null> {
   if (config.emailType === 'tempmail_plus' && emailService instanceof TempMailPlusService) {
-    return emailService.getVerificationCode()
+    return emailService.getContext7RegistrationMailResult()
   }
-
   if (!(emailService instanceof ImapMailService)) return null
-
   const initialWait = 30000
   const maxRetries = 5
   const retryInterval = 10000
-
   await delay(initialWait)
-
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    const code = await emailService.getVerificationCode(email, 5000)
-    if (code) return code
+    const r = await emailService.getContext7RegistrationMailResult(email, 5000)
+    if (r) return r
     if (attempt < maxRetries) {
-      sendLog('warning', `未获取到验证码，${retryInterval / 1000} 秒后重试...`)
+      sendLog('warning', `未获取到 Context7 邮件，${retryInterval / 1000} 秒后重试...`)
       await delay(retryInterval)
     }
+  }
+  return null
+}
+
+async function sessionFromPasswordLogin(
+  email: string,
+  password: string
+): Promise<Ctx7SessionEntry | null> {
+  const est = await establishCtx7DashboardCookie(email, password)
+  if ('error' in est) {
+    sendLog('warning', userFacingNetworkMessage(est.error))
+    return null
+  }
+  const session: Ctx7SessionEntry = {
+    cookieHeader: est.cookieHeader,
+    authorization: est.authorization
+  }
+  rememberContext7DashboardSession(email, session)
+  return session
+}
+
+async function sessionAfterBrowserVerify(
+  email: string,
+  browserOptions: { headless: boolean; onLog: typeof sendLog }
+): Promise<Ctx7SessionEntry | null> {
+  sendLog('info', '正在从浏览器同步会话至接口...')
+  const bridged = await extractContext7DashboardSessionForFetch(browserOptions)
+  if (bridged) {
+    rememberContext7DashboardSession(email, bridged)
+    return bridged
   }
   return null
 }
@@ -376,7 +407,7 @@ async function handleRegistration(config: RegistrationConfig): Promise<void> {
           mainWindow?.webContents.send('register:complete', synced)
           sendLog('success', `账户 ${email} 注册成功！`)
         } else {
-        let sessionForKey: { cookieHeader: string; authorization?: string } | null = null
+        let sessionForKey: Ctx7SessionEntry | null = null
         let apiKey: string | undefined
         let apiKeyName: string | undefined
 
@@ -387,23 +418,31 @@ async function handleRegistration(config: RegistrationConfig): Promise<void> {
           sessionForKey = apiPrep.session
           sendLog('success', 'Clerk 注册已完成')
         } else if (apiPrep.ok) {
-          verificationCode = await getVerificationCode(emailService, email, config)
-          if (!verificationCode) {
-            sendLog('error', '获取验证码超时')
+          const mailResult = await pollContext7RegistrationMail(emailService, email, config)
+          if (!mailResult) {
+            sendLog('error', '获取 Context7 邮件超时')
             continue
           }
-          sendLog('success', `验证码: ${verificationCode}`)
-          const ver = await registerContext7ClerkVerifyAndSession(
-            apiPrep.jar,
-            apiPrep.signUpId,
-            verificationCode,
-            email
-          )
-          if ('error' in ver) {
-            sendLog('warning', `${userFacingNetworkMessage(ver.error)}，改用浏览器`)
-            verificationCode = null
+          if (mailResult.kind === 'existing_account') {
+            sendLog('info', '检测到邮箱已在 Context7 注册，改为接口登录...')
+            sessionForKey = await sessionFromPasswordLogin(email, password)
+            if (!sessionForKey) {
+              sendLog('error', 'Context7 接口登录失败')
+              continue
+            }
           } else {
-            sessionForKey = ver
+            sendLog('success', `验证码: ${mailResult.code}`)
+            const ver = await registerContext7ClerkVerifyAndSession(
+              apiPrep.jar,
+              apiPrep.signUpId,
+              mailResult.code,
+              email
+            )
+            if ('error' in ver) {
+              sendLog('warning', `${userFacingNetworkMessage(ver.error)}，改用浏览器`)
+            } else {
+              sessionForKey = ver
+            }
           }
         }
 
@@ -419,23 +458,37 @@ async function handleRegistration(config: RegistrationConfig): Promise<void> {
             continue
           }
           if (verificationCode === null) {
-            verificationCode = await getVerificationCode(emailService, email, config)
+            const mailResult = await pollContext7RegistrationMail(emailService, email, config)
+            if (!mailResult) {
+              sendLog('error', '获取 Context7 邮件超时')
+              continue
+            }
+            if (mailResult.kind === 'existing_account') {
+              sendLog('info', '检测到邮箱已在 Context7 注册，改为接口登录...')
+              await closeBrowser()
+              usedBrowser = false
+              sessionForKey = await sessionFromPasswordLogin(email, password)
+            } else {
+              verificationCode = mailResult.code
+            }
           }
-          if (!verificationCode) {
-            sendLog('error', '获取验证码超时')
+          if (!sessionForKey && verificationCode) {
+            sendLog('success', `验证码: ${verificationCode}`)
+            const verified = await inputVerificationCode(verificationCode, browserOptions)
+            if (!verified) {
+              sendLog('error', `账户 ${email} 验证失败`)
+              continue
+            }
+            sessionForKey = await sessionAfterBrowserVerify(email, browserOptions)
+            await closeBrowser()
+            usedBrowser = false
+            if (!sessionForKey) {
+              sendLog('info', '尝试通过邮箱密码建立接口会话...')
+              sessionForKey = await sessionFromPasswordLogin(email, password)
+            }
+          } else if (!sessionForKey) {
+            sendLog('error', 'Context7 会话未建立')
             continue
-          }
-          sendLog('success', `验证码: ${verificationCode}`)
-          const verified = await inputVerificationCode(verificationCode, browserOptions)
-          if (!verified) {
-            sendLog('error', `账户 ${email} 验证失败`)
-            continue
-          }
-          await closeBrowser()
-          usedBrowser = false
-          const est = await establishCtx7DashboardCookie(email, password)
-          if (!('error' in est)) {
-            sessionForKey = { cookieHeader: est.cookieHeader, authorization: est.authorization }
           }
         }
 
@@ -569,12 +622,13 @@ async function handleContext7Registration(config: Context7RegistrationConfig): P
   const password = config.password
 
   try {
-    let sessionForKey: { cookieHeader: string; authorization?: string } | null = null
+    let sessionForKey: Ctx7SessionEntry | null = null
     let apiKey: string | undefined
     let apiKeyName: string | undefined
 
     const apiPrep = await registerContext7ClerkSendEmailCode(email, password)
     let verificationCode: string | null = null
+    const ctx7RegConfig = { emailType: config.emailType } as RegistrationConfig
 
     if (apiPrep.ok && apiPrep.skipVerification && apiPrep.session) {
       sessionForKey = apiPrep.session
@@ -584,19 +638,24 @@ async function handleContext7Registration(config: Context7RegistrationConfig): P
         config.emailType === 'tempmail_plus'
           ? new TempMailPlusService(settings.tempMailPlus)
           : new ImapMailService(settings.imapMail)
-      verificationCode = await getVerificationCode(emailService, email, {
-        emailType: config.emailType
-      } as RegistrationConfig)
-      if (!verificationCode) {
-        return { success: false, error: '获取验证码超时' }
+      const mailResult = await pollContext7RegistrationMail(emailService, email, ctx7RegConfig)
+      if (!mailResult) {
+        return { success: false, error: '获取 Context7 邮件超时' }
       }
-      sendLog('success', `验证码: ${verificationCode}`)
-      const ver = await registerContext7ClerkVerifyAndSession(apiPrep.jar, apiPrep.signUpId, verificationCode, email)
-      if ('error' in ver) {
-        sendLog('warning', `${userFacingNetworkMessage(ver.error)}，改用浏览器`)
-        verificationCode = null
+      if (mailResult.kind === 'existing_account') {
+        sendLog('info', '检测到邮箱已在 Context7 注册，改为接口登录...')
+        sessionForKey = await sessionFromPasswordLogin(email, password)
+        if (!sessionForKey) {
+          return { success: false, error: 'Context7 接口登录失败' }
+        }
       } else {
-        sessionForKey = ver
+        sendLog('success', `验证码: ${mailResult.code}`)
+        const ver = await registerContext7ClerkVerifyAndSession(apiPrep.jar, apiPrep.signUpId, mailResult.code, email)
+        if ('error' in ver) {
+          sendLog('warning', `${userFacingNetworkMessage(ver.error)}，改用浏览器`)
+        } else {
+          sessionForKey = ver
+        }
       }
     }
 
@@ -616,25 +675,37 @@ async function handleContext7Registration(config: Context7RegistrationConfig): P
           ? new TempMailPlusService(settings.tempMailPlus)
           : new ImapMailService(settings.imapMail)
       if (verificationCode === null) {
-        verificationCode = await getVerificationCode(emailService, email, {
-          emailType: config.emailType
-        } as RegistrationConfig)
+        const mailResult = await pollContext7RegistrationMail(emailService, email, ctx7RegConfig)
+        if (!mailResult) {
+          await closeBrowser()
+          return { success: false, error: '获取 Context7 邮件超时' }
+        }
+        if (mailResult.kind === 'existing_account') {
+          sendLog('info', '检测到邮箱已在 Context7 注册，改为接口登录...')
+          await closeBrowser()
+          usedBrowser = false
+          sessionForKey = await sessionFromPasswordLogin(email, password)
+        } else {
+          verificationCode = mailResult.code
+        }
       }
-      if (!verificationCode) {
+      if (!sessionForKey && verificationCode) {
+        sendLog('success', `验证码: ${verificationCode}`)
+        const verified = await inputVerificationCode(verificationCode, browserOptions)
+        if (!verified) {
+          await closeBrowser()
+          return { success: false, error: '验证失败' }
+        }
+        sessionForKey = await sessionAfterBrowserVerify(email, browserOptions)
         await closeBrowser()
-        return { success: false, error: '获取验证码超时' }
-      }
-      sendLog('success', `验证码: ${verificationCode}`)
-      const verified = await inputVerificationCode(verificationCode, browserOptions)
-      if (!verified) {
+        usedBrowser = false
+        if (!sessionForKey) {
+          sendLog('info', '尝试通过邮箱密码建立接口会话...')
+          sessionForKey = await sessionFromPasswordLogin(email, password)
+        }
+      } else if (!sessionForKey) {
         await closeBrowser()
-        return { success: false, error: '验证失败' }
-      }
-      await closeBrowser()
-      usedBrowser = false
-      const est = await establishCtx7DashboardCookie(email, password)
-      if (!('error' in est)) {
-        sessionForKey = { cookieHeader: est.cookieHeader, authorization: est.authorization }
+        return { success: false, error: 'Context7 会话未建立' }
       }
     }
 
