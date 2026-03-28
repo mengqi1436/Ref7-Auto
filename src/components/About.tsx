@@ -4,6 +4,7 @@ import {
   User, Github, RefreshCw, ExternalLink, Zap, Download, RotateCcw
 } from 'lucide-react'
 import logo from '../assets/logo.png'
+import { cn } from '@/utils/cn'
 
 type UpdaterStatus = 'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error'
 
@@ -24,12 +25,10 @@ export default function About() {
   const githubUrl = 'https://github.com/mengqi1436/Ref7-Auto'
 
   useEffect(() => {
-    // 获取当前版本
     window.electronAPI?.getAppVersion?.().then((version) => {
       if (version) setCurrentVersion(version)
     })
 
-    // 监听更新状态
     const unsubscribe = window.electronAPI?.onUpdaterStatus?.((status) => {
       setUpdaterStatus(status.status)
       
@@ -127,7 +126,6 @@ export default function About() {
 
     return (
       <motion.div className="flex flex-col items-center" variants={itemVariants}>
-        {/* 检查更新按钮 - 仅在空闲、无更新、错误状态显示 */}
         {(updaterStatus === 'idle' || noUpdate || hasError) && (
           <motion.button
             onClick={handleCheckUpdate}
@@ -150,7 +148,6 @@ export default function About() {
           </motion.button>
         )}
 
-        {/* 检测中状态 */}
         {isChecking && (
           <motion.div 
             initial={{ opacity: 0, y: 10 }}
@@ -167,7 +164,6 @@ export default function About() {
           </motion.div>
         )}
 
-        {/* 发现新版本 - 显示下载按钮 */}
         {hasUpdate && latestVersion && (
           <motion.div 
             initial={{ opacity: 0, y: 10 }}
@@ -189,7 +185,6 @@ export default function About() {
           </motion.div>
         )}
 
-        {/* 下载中 - 显示进度条 */}
         {isDownloading && (
           <motion.div 
             initial={{ opacity: 0, y: 10 }}
@@ -225,7 +220,6 @@ export default function About() {
           </motion.div>
         )}
 
-        {/* 下载完成 - 显示安装按钮 */}
         {isDownloaded && (
           <motion.div 
             initial={{ opacity: 0, y: 10 }}
@@ -247,7 +241,6 @@ export default function About() {
           </motion.div>
         )}
 
-        {/* 无更新 */}
         {noUpdate && (
           <motion.p 
             initial={{ opacity: 0, y: 10 }}
@@ -258,7 +251,6 @@ export default function About() {
           </motion.p>
         )}
 
-        {/* 错误信息 */}
         {hasError && errorMessage && (
           <motion.p 
             initial={{ opacity: 0, y: 10 }}
@@ -341,9 +333,9 @@ export default function About() {
         variants={itemVariants}
       >
         {techStack.map((tech) => (
-          <span 
+          <span
             key={tech.name}
-            className={`px-4 py-2 rounded-full text-sm font-medium border ${tech.color}`}
+            className={cn('px-4 py-2 rounded-full text-sm font-medium border', tech.color)}
           >
             {tech.name}
           </span>

@@ -27,6 +27,10 @@ interface PuppeteerPage {
   waitForNavigation(options?: { waitUntil?: string; timeout?: number }): Promise<unknown>
   $(selector: string): Promise<PuppeteerElement | null>
   $$(selector: string): Promise<PuppeteerElement[]>
+  frames?: () => Array<{
+    $(selector: string): Promise<PuppeteerElement | null>
+    $$(selector: string): Promise<PuppeteerElement[]>
+  }>
   evaluate<T>(fn: () => T): Promise<T>
   evaluate<T, A>(fn: (arg: A) => T, arg: A): Promise<T>
   cookies(...urls: string[]): Promise<Array<{ name: string; value: string }>>
@@ -59,6 +63,8 @@ const CTX7_SESSION_COOKIE_URLS = [
   'https://accounts.context7.com'
 ] as const
 const TURNSTILE_TIMEOUT = 120000
+const TURNSTILE_IFRAME_WAIT_MS = 20000
+const EMAIL_FIELD_TIMEOUT_MS = 60000
 
 const BROWSER_ARGS = [
   '--disable-blink-features=AutomationControlled',
@@ -71,7 +77,8 @@ const BROWSER_ARGS = [
 ]
 
 const SELECTORS = {
-  email: 'input[name="emailAddress"], input[name="identifier"], input[type="email"], input[name="email"], input[autocomplete="email"], input[autocomplete="username"]',
+  email:
+    'input[name="emailAddress"], input[name="identifier"], input[type="email"], input[name="email"], input[autocomplete="email"], input[autocomplete="username"], input[placeholder*="Email" i], input[placeholder*="email"], input[id*="email" i], input[id*="identifier" i], input[data-testid*="email" i]',
   password: 'input[type="password"], input[name="password"], input[autocomplete="current-password"], input[autocomplete="new-password"]',
   code: 'input[name="code"], input[type="text"][maxlength="6"], input[placeholder*="验证码"], input[placeholder*="code"], input[autocomplete="one-time-code"]'
 }
@@ -152,6 +159,73 @@ async function clickButtonByText(patterns: string[]): Promise<boolean> {
   }, patterns)
 }
 
+type FrameLike = {
+  $(selector: string): Promise<PuppeteerElement | null>
+  $$(selector: string): Promise<PuppeteerElement[]>
+}
+
+async function elementLooksVisible(el: PuppeteerElement): Promise<boolean> {
+  try {
+    return await el.evaluate((e) => {
+      const h = e as HTMLElement
+      const r = h.getBoundingClientRect()
+      const st = window.getComputedStyle(h)
+      if (st.visibility === 'hidden' || st.display === 'none' || st.opacity === '0') return false
+      return r.width > 0 && r.height > 0
+    })
+  } catch {
+    return false
+  }
+}
+
+function iterFrames(targetPage: PuppeteerPage): FrameLike[] {
+  if (typeof targetPage.frames === 'function') {
+    const frs = targetPage.frames()
+    if (frs.length > 0) return frs as FrameLike[]
+  }
+  return [targetPage]
+}
+
+async function waitForEmailInputHandle(
+  targetPage: PuppeteerPage,
+  timeoutMs: number
+): Promise<PuppeteerElement | null> {
+  const selector = SELECTORS.email
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    try {
+      const candidates: Array<Promise<PuppeteerElement | null>> = []
+      for (const ctx of iterFrames(targetPage)) {
+        candidates.push(ctx.$(selector))
+      }
+      const resolved = await Promise.all(candidates)
+      for (const el of resolved) {
+        if (el && (await elementLooksVisible(el))) return el
+      }
+    } catch {
+      /* frame 未就绪等 */
+    }
+    await delay(350)
+  }
+  return null
+}
+
+async function queryVisiblePasswordInputs(targetPage: PuppeteerPage): Promise<PuppeteerElement[]> {
+  const selector = SELECTORS.password
+  const found: PuppeteerElement[] = []
+  for (const ctx of iterFrames(targetPage)) {
+    try {
+      const list = await ctx.$$(selector)
+      for (const el of list) {
+        if (await elementLooksVisible(el)) found.push(el)
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  return found
+}
+
 async function waitForTurnstile(targetPage: PuppeteerPage, options: BrowserServiceOptions): Promise<void> {
   const startTime = Date.now()
   await humanDelay(2000, 4000)
@@ -159,8 +233,16 @@ async function waitForTurnstile(targetPage: PuppeteerPage, options: BrowserServi
   while (Date.now() - startTime < TURNSTILE_TIMEOUT) {
     await simulateHumanBehavior(targetPage)
 
-    const turnstileFrame = await targetPage.$('iframe[src*="challenges.cloudflare.com"], .cf-turnstile iframe')
-    if (!turnstileFrame) return
+    const turnstileFrame = await targetPage.$(
+      'iframe[src*="challenges.cloudflare.com"], iframe[src*="turnstile"], .cf-turnstile iframe'
+    )
+    if (!turnstileFrame) {
+      if (Date.now() - startTime < TURNSTILE_IFRAME_WAIT_MS) {
+        await humanDelay(400, 800)
+        continue
+      }
+      return
+    }
 
     const isVerified = await targetPage.evaluate(() => {
       const input = document.querySelector('input[name="cf-turnstile-response"]') as HTMLInputElement
@@ -237,17 +319,30 @@ export async function registerAccount(data: RegistrationData, options: BrowserSe
 
   try {
     options.onLog('info', '正在打开注册页面...')
-    await page.goto(REGISTER_URL, { waitUntil: 'networkidle2', timeout: 30000 })
+    await page.goto(REGISTER_URL, { waitUntil: 'domcontentloaded', timeout: 45000 })
     await humanDelay(2000, 4000)
     await simulateHumanBehavior(page)
 
-    await page.waitForSelector(SELECTORS.email, { timeout: 20000 })
+    const turnstileBeforeForm = await page.$(
+      'iframe[src*="challenges.cloudflare.com"], iframe[src*="turnstile"], .cf-turnstile'
+    )
+    if (turnstileBeforeForm) {
+      options.onLog('warning', '注册页检测到 Turnstile，等待通过后再填写表单...')
+      await waitForTurnstile(page, options)
+      await humanDelay(800, 1500)
+    }
+
+    options.onLog('info', '等待邮箱输入框（含子框架）...')
+    const emailInput = await waitForEmailInputHandle(page, EMAIL_FIELD_TIMEOUT_MS)
+    if (!emailInput) {
+      throw new Error(
+        `未在 ${EMAIL_FIELD_TIMEOUT_MS / 1000}s 内找到可用的邮箱输入框，请尝试开启「显示浏览器」查看页面是否改版或需手动验证`
+      )
+    }
     options.onLog('success', '注册页面加载完成')
     await humanDelay(500, 1500)
 
     options.onLog('info', `填写邮箱: ${data.email}`)
-    const emailInput = await page.$(SELECTORS.email)
-    if (!emailInput) throw new Error('未找到邮箱输入框')
 
     await humanClick(emailInput, page)
     await humanDelay(200, 400)
@@ -258,8 +353,8 @@ export async function registerAccount(data: RegistrationData, options: BrowserSe
     await simulateHumanBehavior(page)
 
     options.onLog('info', '填写密码...')
-    const passwordInputs = await page.$$(SELECTORS.password)
-    if (passwordInputs.length === 0) throw new Error('未找到密码输入框')
+    const passwordInputs = await queryVisiblePasswordInputs(page)
+    if (passwordInputs.length === 0) throw new Error('未找到密码输入框（含子框架）')
 
     for (const input of passwordInputs) {
       await humanClick(input, page)

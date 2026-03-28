@@ -4,7 +4,7 @@
     "module": "CommonJS",
     "lib": ["ES2020", "DOM"],
     "outDir": "dist-electron",
-    "rootDir": "electron",
+    "rootDir": ".",
     "strict": false,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -15,6 +15,6 @@
     "sourceMap": true,
     "noImplicitAny": false
   },
-  "include": ["electron/**/*"],
+  "include": ["electron/**/*.ts", "shared/**/*.ts"],
   "exclude": ["node_modules"]
 }

@@ -4,7 +4,9 @@ import {
   Mail, Key, Clock, Monitor, Save, RotateCcw, CheckCircle, AlertCircle,
   Globe, Shield, Sun, Moon, Palette, Zap, Server, ChevronDown, Settings2
 } from 'lucide-react'
+import { createDefaultAppSettings } from '@shared/defaultAppSettings'
 import type { AppSettings, Theme, TempMailPlusConfig, ImapMailConfig, EmailType } from '../types'
+import { cn } from '@/utils/cn'
 
 interface SettingsProps {
   settings: AppSettings | null
@@ -107,13 +109,7 @@ export default function Settings({ settings, setSettings, theme, setTheme, onNot
   }, [settings, onNotify])
 
   const resetSettings = useCallback(() => {
-    setSettings({
-      tempMailPlus: { username: '', epin: '', extension: '@mailto.plus' },
-      imapMail: { server: 'imap.qq.com', port: 993, user: '', pass: '', dir: 'INBOX', protocol: 'IMAP', domain: '' },
-      registration: { passwordLength: 12, intervalMin: 3, intervalMax: 8, timeout: 60, showBrowser: false, defaultBatchCount: 1, maxBatchCount: 20 },
-      defaultEmailType: 'tempmail_plus',
-      theme: 'system'
-    })
+    setSettings(createDefaultAppSettings())
     setTheme('system')
     setTempMailStatus('idle')
     setImapStatus('idle')
@@ -145,9 +141,10 @@ export default function Settings({ settings, setSettings, theme, setTheme, onNot
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id)}
-                  className={`relative flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
+                  className={cn(
+                    'relative flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer',
                     isActive ? 'text-primary' : 'text-muted-foreground hover:text-foreground'
-                  }`}
+                  )}
                 >
                   <Icon size={16} />
                   <span>{tab.label}</span>
@@ -218,11 +215,12 @@ export default function Settings({ settings, setSettings, theme, setTheme, onNot
                         onClick={() => handleThemeChange(opt.value)}
                         whileHover={{ scale: 1.02 }}
                         whileTap={{ scale: 0.98 }}
-                        className={`flex items-center gap-2 px-4 py-2.5 rounded-lg border transition-all cursor-pointer ${
+                        className={cn(
+                          'flex items-center gap-2 px-4 py-2.5 rounded-lg border transition-all cursor-pointer',
                           isActive
                             ? 'bg-primary/10 border-primary text-primary'
                             : 'bg-background border-border/50 hover:border-primary/50'
-                        }`}
+                        )}
                       >
                         <Icon size={16} />
                         <span className="text-sm font-medium">{opt.label}</span>
@@ -247,11 +245,12 @@ export default function Settings({ settings, setSettings, theme, setTheme, onNot
                         onClick={() => updateDefaultEmailType(opt.value)}
                         whileHover={{ scale: 1.02 }}
                         whileTap={{ scale: 0.98 }}
-                        className={`flex items-center gap-2 px-4 py-2.5 rounded-lg border transition-all cursor-pointer ${
+                        className={cn(
+                          'flex items-center gap-2 px-4 py-2.5 rounded-lg border transition-all cursor-pointer',
                           isActive
                             ? 'bg-primary/10 border-primary text-primary'
                             : 'bg-background border-border/50 hover:border-primary/50'
-                        }`}
+                        )}
                       >
                         {opt.value === 'tempmail_plus' ? <Globe size={16} /> : <Mail size={16} />}
                         <span className="text-sm font-medium">{opt.label}</span>
@@ -564,9 +563,10 @@ export default function Settings({ settings, setSettings, theme, setTheme, onNot
                   </div>
                   <button
                     onClick={() => updateRegistration('showBrowser', !settings.registration.showBrowser)}
-                    className={`w-10 h-5 rounded-full transition-colors relative cursor-pointer ${
+                    className={cn(
+                      'w-10 h-5 rounded-full transition-colors relative cursor-pointer',
                       settings.registration.showBrowser ? 'bg-primary' : 'bg-muted'
-                    }`}
+                    )}
                   >
                     <motion.span
                       className="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow-sm"

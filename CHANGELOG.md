@@ -2,6 +2,80 @@
 
 本项目所有重要更改都将记录在此文件中。
 
+## [1.7.5] - 2026-03-29
+
+### 重构 / 工程
+- ♻️ 核心类型与默认设置迁入 **`shared/`**，渲染与主进程共用单一来源
+- ♻️ **`App.tsx` 瘦身**：抽取 `useAppTheme`、`useAppNotifications`、`useRegistrationSideEffects` 与工具函数 `cn`
+- ♻️ 精简 **`preload`**、**`ipc/handlers`** 与全局样式；**Tailwind** 配置与 **`globals.css`** 收敛
+- ♻️ **`electron/services/browser`** 等行为整理与能力补全
+
+### 文档
+- 📝 同步 **README**、**CHANGELOG**；移除 **`AGENTS.md`**
+
+## [1.7.4] - 2026-03-29
+
+### 优化
+- 🔧 增强 Context7 请求与 Ref 额度（`ref-credits`）拉取与错误处理，完善 IPC
+- 📋 账户列表展示与交互调整
+- 🛠️ 开发启动脚本 `start-dev.bat` 小更新
+
+## [1.7.3] - 2026-03-29
+
+### 新增 / 改进
+- 📧 Context7：邮件分流，区分验证码邮件与「已注册」类通知，避免误判
+- 🔗 浏览器与后续步骤的会话桥接；邮箱验证后改为以 HTTP 接口为主的续跑流程，减少无效自动化
+- 📬 IMAP / TempMail+ 与 Context7 邮件解析辅助（`context7-mail` 等）
+
+### 依赖
+- 依赖与 lockfile 版本对齐
+
+## [1.7.2] - 2026-03-28
+
+### 改进
+- 📧 IMAP 服务增强（收取、解析与注册流程衔接）
+- 🔌 Ref 侧：`ref-api`、`ref-credits` 与 IPC 调度优化
+- 🧾 新增 `describe-fetch-error` 等工具，统一网络错误描述
+- 🖥️ 注册面板、账户列表与 `App` 壳层路由/状态适配
+
+## [1.7.1] - 2026-03-28
+
+### 新增
+- 💾 数据库与 Ref 额度相关能力扩展，IPC / preload 与渲染层类型同步
+- 📊 账户列表与主进程联动增强（额度、刷新等）
+
+### CI
+- ✅ 增加 push / Pull Request 触发的持续集成构建
+
+## [1.7.0] - 2026-03-28
+
+### 新增
+- 🔗 **Ref.tools HTTP API 集成**（`ref-api.ts`）：与浏览器自动化互补的后端调用路径
+- 📚 Ref / Context7 相关文档与网络分析辅助脚本（`docs/ref-api-analysis` 等）
+- 🛠️ IPC、数据库字段、`RegisterPanel` / `AccountList` 与 `context7-requests` 链条大修
+
+## [1.6.1] - 2026-03-21
+
+### 新增
+- 📡 Context7 / Ref **额度（credits）** IPC，支持账户侧刷新与展示
+- 🔄 注册面板能力扩展，与额度、补全流程配合
+
+## [1.6.0] - 2026-03-21
+
+### 版本
+- 📌 版本号递进到 1.6.0，与后续发版与 CI 流程对齐
+
+## [1.5.3] - 2026-03-21
+
+### 新增
+- 📊 **Ref / Context7 额度 HTTP 拉取**（`ref-credits`、`context7-requests`）
+- 🔐 Context7 **Clerk** 登录与控制台向 API 请求编排
+- 📈 Dashboard / 账户列表上的请求数、额度类信息展示
+- 🤖 `ref-browser` 浏览器自动化增强
+
+### CI / 工程
+- 📦 GitHub Release 自动上传产物；构建侧 `--publish never` 与 `GITHUB_TOKEN` 使用方式调整
+
 ## [1.5.2] - 2026-01-19
 
 ### 修复
@@ -47,6 +121,16 @@
 - 浏览器自动化增强反检测能力（Turnstile 验证绕过）
 - TypeScript 类型定义完善（RefRegistrationConfig、RefRegistrationResult）
 - IMAP 服务增加多种验证链接匹配模式
+
+## [1.4.5] – [1.4.8] - 2026-01-18 ~ 2026-01-19
+
+### 新增 / 修复
+- ✨ **自动更新**：集成 `electron-updater`，支持检查 GitHub Release
+- 🔧 关闭差分下载（differential download）、移除旧版自研更新逻辑；动态版本展示统一 `app.getVersion()`
+- 🐛 关闭 blockmap 生成，缓解上传冲突；Windows 安装包图标改为 `icon.png`；移除 macOS zip 目标等构建调整
+
+### CI
+- 🤖 GitHub Actions 多平台矩阵构建、Linux 依赖与 Ubuntu 镜像修正、`fail-fast` 策略优化
 
 ## [1.4.0] - 2026-01-18
 

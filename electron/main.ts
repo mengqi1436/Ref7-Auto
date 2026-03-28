@@ -8,8 +8,15 @@ let tray: Tray | null = null
 
 const isDev = process.env.NODE_ENV === 'development'
 
+function iconPngPath(): string {
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, 'assets', 'icon.png')
+  }
+  return path.join(__dirname, '..', '..', 'assets', 'icon.png')
+}
+
 function createTray() {
-  const iconPath = path.join(__dirname, '../assets/icon.png')
+  const iconPath = iconPngPath()
   const icon = nativeImage.createFromPath(iconPath)
   tray = new Tray(icon.resize({ width: 16, height: 16 }))
   tray.setToolTip('REF7 Auto Register')
@@ -54,7 +61,7 @@ function createWindow() {
     frame: false,
     titleBarStyle: 'hidden',
     backgroundColor: isDark ? '#0B0B10' : '#f8fafc',
-    icon: path.join(__dirname, '../assets/icon.png'),
+    icon: iconPngPath(),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
@@ -66,7 +73,7 @@ function createWindow() {
   if (isDev) {
     mainWindow.loadURL('http://localhost:8961')
   } else {
-    mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
+    mainWindow.loadFile(path.join(__dirname, '..', '..', 'dist', 'index.html'))
   }
 
   mainWindow.on('closed', () => {
@@ -107,14 +114,10 @@ app.whenReady().then(async () => {
   initAutoUpdater(mainWindow!)
 })
 
-app.on('window-all-closed', () => {
-  // 保持托盘图标运行，不退出应用
-})
+app.on('window-all-closed', () => {})
 
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     createWindow()
   }
 })
-
-export { mainWindow }

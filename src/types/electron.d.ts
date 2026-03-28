@@ -15,7 +15,7 @@ import type {
   TempMailPlusConfig,
   ImapMailConfig,
   Theme,
-} from './index'
+} from '../../shared/types'
 
 export interface IElectronAPI {
   getAccounts: () => Promise<Account[]>

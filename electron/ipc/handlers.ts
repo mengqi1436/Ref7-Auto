@@ -40,62 +40,23 @@ import {
 } from '../services/context7-requests'
 import { TempMailPlusService } from '../services/email/tempmailplus'
 import { ImapMailService } from '../services/email/imap'
-import type { AccountStatus, EmailType } from '../services/database'
-
-type LogType = 'success' | 'error' | 'warning' | 'info'
-
-type BatchRegistrationScope = 'context7_only' | 'ref_only' | 'both'
-
-interface RegistrationConfig {
-  emailType: EmailType
-  count: number
-  passwordLength: number
-  intervalMin: number
-  intervalMax: number
-  showBrowser: boolean
-  registrationScope?: BatchRegistrationScope
-}
-
-interface RefRegistrationConfig {
-  accountId: number
-  email: string
-  password: string
-  showBrowser: boolean
-}
-
-interface Context7RegistrationConfig {
-  accountId: number
-  email: string
-  password: string
-  emailType: EmailType
-  showBrowser: boolean
-}
-
-interface Context7RegistrationResult {
-  success: boolean
-  apiKey?: string
-  apiKeyName?: string
-  requestsLimit?: number
-  ctx7RequestsUsed?: number
-  ctx7RequestsLimit?: number
-  ctx7RequestsUpdatedAt?: string
-  error?: string
-}
-
-interface RefRegistrationResult {
-  success: boolean
-  refApiKey?: string
-  refCredits?: number
-  refCreditsUpdatedAt?: string
-  error?: string
-}
+import type {
+  AccountStatus,
+  EmailType,
+  RegistrationConfig,
+  RefRegistrationConfig,
+  Context7RegistrationConfig,
+  Context7RegistrationResult,
+  RefRegistrationResult,
+  LogType,
+} from '../../shared/types'
 
 let mainWindow: BrowserWindow | null = null
 
-const CHARS = 'abcdefghijklmnopqrstuvwxyz0123456789'
 const UPPERCASE = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
 const LOWERCASE = 'abcdefghijklmnopqrstuvwxyz'
 const NUMBERS = '0123456789'
+const CHARS = LOWERCASE + NUMBERS
 const SYMBOLS = '!@#$%^&*'
 const ALL_CHARS = UPPERCASE + LOWERCASE + NUMBERS + SYMBOLS
 
@@ -103,7 +64,6 @@ const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 const randomInt = (min: number, max: number) => Math.floor(Math.random() * (max - min + 1)) + min
 const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : '未知错误'
 
-/** 所有注册 IPC（Context7 批量 / Ref）共用一条队列，严格按调用顺序串行执行 */
 let registrationQueueTail: Promise<void> = Promise.resolve()
 
 function enqueueRegistrationTask<T>(task: () => Promise<T>): Promise<T> {
@@ -179,6 +139,15 @@ function createEmailService(
   const email = generateRandomEmail(settings.imapMail.domain)
   sendLog('info', `生成邮箱: ${email}`)
   return { email, emailService }
+}
+
+function context7MailService(
+  settings: ReturnType<typeof database.getSettings>,
+  emailType: EmailType
+): TempMailPlusService | ImapMailService {
+  return emailType === 'tempmail_plus'
+    ? new TempMailPlusService(settings.tempMailPlus)
+    : new ImapMailService(settings.imapMail)
 }
 
 type Ctx7SessionEntry = { cookieHeader: string; authorization?: string }
@@ -657,10 +626,7 @@ async function handleContext7Registration(config: Context7RegistrationConfig): P
       sessionForKey = apiPrep.session
       sendLog('success', 'Clerk 注册已完成')
     } else if (apiPrep.ok) {
-      const emailService =
-        config.emailType === 'tempmail_plus'
-          ? new TempMailPlusService(settings.tempMailPlus)
-          : new ImapMailService(settings.imapMail)
+      const emailService = context7MailService(settings, config.emailType)
       const mailResult = await pollContext7RegistrationMail(emailService, email, ctx7RegConfig)
       if (!mailResult) {
         return { success: false, error: '获取 Context7 邮件超时' }
@@ -693,10 +659,7 @@ async function handleContext7Registration(config: Context7RegistrationConfig): P
         await closeBrowser()
         return { success: false, error: 'Context7 注册失败' }
       }
-      const emailService =
-        config.emailType === 'tempmail_plus'
-          ? new TempMailPlusService(settings.tempMailPlus)
-          : new ImapMailService(settings.imapMail)
+      const emailService = context7MailService(settings, config.emailType)
       if (verificationCode === null) {
         const mailResult = await pollContext7RegistrationMail(emailService, email, ctx7RegConfig)
         if (!mailResult) {

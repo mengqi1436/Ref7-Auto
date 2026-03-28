@@ -19,6 +19,7 @@ import type {
   Account,
   BatchRegistrationScope,
 } from '../types'
+import { cn } from '@/utils/cn'
 
 interface RegisterPanelProps {
   settings: AppSettings | null
@@ -76,11 +77,14 @@ function registrationScopeButtonClass(
   const base =
     'flex-1 min-w-0 py-2.5 px-2 rounded-lg text-sm font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed'
   if (selected) {
-    return accent === 'primary'
-      ? `${base} bg-primary text-primary-foreground shadow-sm`
-      : `${base} bg-accent text-accent-foreground shadow-sm`
+    return cn(
+      base,
+      accent === 'primary'
+        ? 'bg-primary text-primary-foreground shadow-sm'
+        : 'bg-accent text-accent-foreground shadow-sm'
+    )
   }
-  return `${base} text-muted-foreground hover:bg-secondary/80 hover:text-foreground`
+  return cn(base, 'text-muted-foreground hover:bg-secondary/80 hover:text-foreground')
 }
 
 function emailServiceCardClassName(
@@ -90,11 +94,11 @@ function emailServiceCardClassName(
   const base =
     'flex flex-col items-center justify-center gap-2 p-5 rounded-xl border transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed'
   if (type === 'tempmail_plus') {
-    if (isSelected) return `${base} bg-primary/10 border-primary text-primary`
-    return `${base} bg-background border-border/50 hover:bg-secondary/50 hover:border-primary/50`
+    if (isSelected) return cn(base, 'bg-primary/10 border-primary text-primary')
+    return cn(base, 'bg-background border-border/50 hover:bg-secondary/50 hover:border-primary/50')
   }
-  if (isSelected) return `${base} bg-accent/10 border-accent text-accent`
-  return `${base} bg-background border-border/50 hover:bg-secondary/50 hover:border-accent/50`
+  if (isSelected) return cn(base, 'bg-accent/10 border-accent text-accent')
+  return cn(base, 'bg-background border-border/50 hover:bg-secondary/50 hover:border-accent/50')
 }
 
 export default function RegisterPanel({
@@ -384,9 +388,11 @@ export default function RegisterPanel({
       }}
       disabled={!togglable || isRegistering}
       whileTap={{ scale: togglable ? 0.95 : 1 }}
-      className={`w-14 h-7 rounded-full transition-colors relative ${
-        togglable ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'
-      } ${active ? color : 'bg-secondary'} disabled:opacity-50 disabled:cursor-not-allowed`}
+      className={cn(
+        'w-14 h-7 rounded-full transition-colors relative disabled:opacity-50 disabled:cursor-not-allowed',
+        togglable ? 'cursor-pointer' : 'cursor-not-allowed opacity-50',
+        active ? color : 'bg-secondary'
+      )}
     >
       <motion.span
         className="absolute top-1 left-1 w-5 h-5 rounded-full bg-white shadow-md"
@@ -404,18 +410,18 @@ export default function RegisterPanel({
     </p>
   )
 
-  let startButtonClass =
-    'w-full flex items-center justify-center gap-3 p-5 rounded-xl font-semibold text-lg transition-all cursor-pointer bg-primary text-primary-foreground hover:bg-primary/90 shadow-neon'
+  const startButtonClass = cn(
+    'w-full flex items-center justify-center gap-3 p-5 rounded-xl font-semibold text-lg transition-all cursor-pointer shadow-neon',
+    isRefMode
+      ? 'bg-accent text-accent-foreground hover:bg-accent/90 shadow-neon-accent'
+      : 'bg-primary text-primary-foreground hover:bg-primary/90'
+  )
   let startButtonIcon = <Play size={22} fill="currentColor" />
   let startButtonLabel = '启动任务'
   if (isCtx7Mode) {
-    startButtonClass =
-      'w-full flex items-center justify-center gap-3 p-5 rounded-xl font-semibold text-lg transition-all cursor-pointer bg-primary text-primary-foreground hover:bg-primary/90 shadow-neon'
     startButtonIcon = <Zap size={22} />
     startButtonLabel = '开始 Context7 注册'
   } else if (isRefMode) {
-    startButtonClass =
-      'w-full flex items-center justify-center gap-3 p-5 rounded-xl font-semibold text-lg transition-all cursor-pointer bg-accent text-accent-foreground hover:bg-accent/90 shadow-neon-accent'
     startButtonIcon = <RefreshCw size={22} />
     startButtonLabel = '开始 Ref 注册'
   }
@@ -821,7 +827,10 @@ export default function RegisterPanel({
                   initial={{ opacity: 0, x: -10 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: index * 0.02 }}
-                  className={`flex items-start gap-3 p-3 rounded-lg transition-colors ${LOG_STYLES[log.type]}`}
+                  className={cn(
+                    'flex items-start gap-3 p-3 rounded-lg transition-colors',
+                    LOG_STYLES[log.type]
+                  )}
                 >
                   <span className="text-sm opacity-60 mt-0.5">
                     {log.timestamp}

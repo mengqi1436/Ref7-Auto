@@ -5,6 +5,7 @@ import {
   ChevronLeft, ChevronRight, Copy, Check, Key, X, RefreshCw
 } from 'lucide-react'
 import type { Account } from '../types'
+import { cn } from '@/utils/cn'
 
 interface AccountListProps {
   accounts: Account[]
@@ -50,15 +51,16 @@ function formatCtx7RequestsCell(
     : '—'
 }
 
-function ConfirmModal({ 
-  isOpen, 
-  onClose, 
-  onConfirm, 
-  title, 
+function ConfirmModal({
+  isOpen,
+  onClose,
+  onConfirm,
+  title,
   message,
   confirmText = '确定',
   cancelText = '取消',
-  variant = 'danger'
+  variant = 'danger',
+  className,
 }: {
   isOpen: boolean
   onClose: () => void
@@ -68,6 +70,7 @@ function ConfirmModal({
   confirmText?: string
   cancelText?: string
   variant?: 'danger' | 'primary'
+  className?: string
 }) {
   if (!isOpen) return null
 
@@ -80,8 +83,11 @@ function ConfirmModal({
         exit={{ opacity: 0 }}
       >
         <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-        <motion.div 
-          className="relative bg-card border border-border/50 rounded-2xl shadow-2xl p-6 w-full max-w-md"
+        <motion.div
+          className={cn(
+            'relative bg-card border border-border/50 rounded-2xl shadow-2xl p-6 w-full max-w-md',
+            className
+          )}
           initial={{ scale: 0.9, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           exit={{ scale: 0.9, opacity: 0 }}
@@ -107,11 +113,12 @@ function ConfirmModal({
               onClick={() => { onConfirm(); onClose() }}
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
-              className={`px-5 py-2.5 rounded-xl text-base font-medium transition-colors cursor-pointer ${
-                variant === 'danger' 
+              className={cn(
+                'px-5 py-2.5 rounded-xl text-base font-medium transition-colors cursor-pointer',
+                variant === 'danger'
                   ? 'bg-destructive text-destructive-foreground hover:bg-destructive/90'
                   : 'bg-primary text-primary-foreground hover:bg-primary/90'
-              }`}
+              )}
             >
               {confirmText}
             </motion.button>
@@ -587,9 +594,10 @@ export default function AccountList({
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: index * 0.03 }}
-                    className={`group hover:bg-secondary/30 transition-colors ${
-                      selectedIds.includes(account.id) ? 'bg-primary/5' : ''
-                    }`}
+                    className={cn(
+                      'group hover:bg-secondary/30 transition-colors',
+                      selectedIds.includes(account.id) && 'bg-primary/5'
+                    )}
                   >
                     <td className="px-4 py-4 text-center">
                       <input
@@ -700,10 +708,13 @@ export default function AccountList({
                           <span className="text-xs tabular-nums">
                             <span className="text-muted-foreground">Available Credits: </span>
                             <span
-                              className={`font-medium ${refCreditsVerifiedClass(
-                                refCreditsByAccount[account.id],
-                                account.refEmailVerified
-                              )}`}
+                              className={cn(
+                                'font-medium',
+                                refCreditsVerifiedClass(
+                                  refCreditsByAccount[account.id],
+                                  account.refEmailVerified
+                                )
+                              )}
                             >
                               {formatRefCreditsCell(refCreditsByAccount[account.id], account.refCredits)}
                             </span>
@@ -754,12 +765,11 @@ export default function AccountList({
                         >
                           <RefreshCw
                             size={16}
-                            className={
-                              singleRefreshLoading.has(account.id) ||
-                              inlineRegisterLoading.has(account.id)
-                                ? 'animate-spin'
-                                : ''
-                            }
+                            className={cn(
+                              (singleRefreshLoading.has(account.id) ||
+                                inlineRegisterLoading.has(account.id)) &&
+                                'animate-spin'
+                            )}
                           />
                         </motion.button>
                         <motion.button
@@ -846,11 +856,14 @@ export default function AccountList({
               </button>
               
               <div className="flex items-center gap-3 mb-4">
-                <div className={`p-3 rounded-full ${
-                  importResult.success 
-                    ? 'bg-emerald-500/10 text-emerald-500' 
-                    : 'bg-amber-500/10 text-amber-500'
-                }`}>
+                <div
+                  className={cn(
+                    'p-3 rounded-full',
+                    importResult.success
+                      ? 'bg-emerald-500/10 text-emerald-500'
+                      : 'bg-amber-500/10 text-amber-500'
+                  )}
+                >
                   {importResult.success ? <Check size={24} /> : <Upload size={24} />}
                 </div>
                 <h3 className="text-xl font-semibold">{importResult.message}</h3>

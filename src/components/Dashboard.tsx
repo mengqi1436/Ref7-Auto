@@ -4,13 +4,21 @@ import {
   Play, Users, Clock, CheckCircle, XCircle, Terminal,
   Activity, ArrowRight, Mail, Server, Copy, Check, Eye, EyeOff
 } from 'lucide-react'
-import type { Account, LogEntry, EmailType, Page } from '../types'
+import type { Account, AccountStatus, LogEntry, EmailType, Page } from '../types'
+import { cn } from '@/utils/cn'
 
 interface DashboardProps {
   accounts: Account[]
   logs: LogEntry[]
   isRegistering: boolean
   onNavigate: (page: Page, emailType?: EmailType) => void
+}
+
+const logLineClassByType: Record<LogEntry['type'], string> = {
+  error: 'text-destructive',
+  success: 'text-emerald-500',
+  warning: 'text-accent',
+  info: 'text-foreground',
 }
 
 export default function Dashboard({ accounts, logs, isRegistering, onNavigate }: DashboardProps) {
@@ -40,7 +48,7 @@ export default function Dashboard({ accounts, logs, isRegistering, onNavigate }:
     })
   }, [])
 
-  const getStatusIcon = useCallback((status: string) => {
+  const getStatusIcon = useCallback((status: AccountStatus) => {
     if (status === 'active') return <CheckCircle size={14} className="text-emerald-500" />
     if (status === 'pending') return <Clock size={14} className="text-accent" />
     return <XCircle size={14} className="text-destructive" />
@@ -168,7 +176,12 @@ export default function Dashboard({ accounts, logs, isRegistering, onNavigate }:
                 <h2 className="font-semibold text-sm">运行日志</h2>
               </div>
               <div className="flex items-center gap-1.5 text-xs font-mono">
-                <span className={`w-1.5 h-1.5 rounded-full ${isRegistering ? 'bg-emerald-500 animate-pulse' : 'bg-muted-foreground'}`} />
+                <span
+                  className={cn(
+                    'w-1.5 h-1.5 rounded-full',
+                    isRegistering ? 'bg-emerald-500 animate-pulse' : 'bg-muted-foreground'
+                  )}
+                />
                 <span className="text-muted-foreground">{isRegistering ? 'LIVE' : 'IDLE'}</span>
               </div>
             </header>
@@ -191,12 +204,12 @@ export default function Dashboard({ accounts, logs, isRegistering, onNavigate }:
                       <time className="font-mono text-xs text-muted-foreground mt-0.5 min-w-[70px] tabular-nums">
                         {log.timestamp}
                       </time>
-                      <span className={`flex-1 break-all text-sm ${
-                        log.type === 'error' ? 'text-destructive' :
-                        log.type === 'success' ? 'text-emerald-500' :
-                        log.type === 'warning' ? 'text-accent' :
-                        'text-foreground'
-                      }`}>
+                      <span
+                        className={cn(
+                          'flex-1 break-all text-sm',
+                          logLineClassByType[log.type]
+                        )}
+                      >
                         {log.message}
                       </span>
                     </motion.li>

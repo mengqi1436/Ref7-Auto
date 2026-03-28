@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { CheckCircle, AlertCircle, Info, X } from 'lucide-react'
+import { cn } from '@/utils/cn'
 
 export type NotificationType = 'success' | 'error' | 'info'
 
@@ -53,12 +54,14 @@ function NotificationCard({
   notification,
   Icon,
   colorClass,
-  onDismiss
+  onDismiss,
+  className,
 }: {
   notification: NotificationItem
   Icon: typeof CheckCircle
   colorClass: string
   onDismiss: (id: string) => void
+  className?: string
 }) {
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -74,7 +77,11 @@ function NotificationCard({
       animate={{ opacity: 1, x: 0, scale: 1 }}
       exit={{ opacity: 0, x: 100, scale: 0.9 }}
       transition={{ type: 'spring', stiffness: 400, damping: 30 }}
-      className={`flex items-start gap-3 p-4 rounded-xl border backdrop-blur-sm ${colorClass}`}
+      className={cn(
+        'flex items-start gap-3 p-4 rounded-xl border backdrop-blur-sm',
+        colorClass,
+        className
+      )}
     >
       <Icon size={20} className="flex-shrink-0 mt-0.5" />
       <p className="flex-1 text-sm font-medium text-foreground">{notification.message}</p>
